@@ -16,4 +16,9 @@ if (-not (Test-Path $python)) {
 
 Write-Host "Servidor en http://127.0.0.1:8000" -ForegroundColor Green
 Set-Location (Join-Path $root "backend")
-& $python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+# --no-proxy-headers es importante: uvicorn lo trae activado por defecto y
+# reescribe la IP del cliente con la cabecera X-Forwarded-For, que cualquiera
+# puede inventarse. Con esto la IP es siempre la del par que abre la conexión,
+# y el límite de peticiones no se puede saltar. Si algún día pones un proxy
+# propio delante, se declara en VDL_TRUSTED_PROXIES y lo gestiona la aplicación.
+& $python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-proxy-headers

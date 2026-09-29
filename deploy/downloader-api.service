@@ -23,8 +23,14 @@ Group=downloader
 WorkingDirectory=/opt/downloader/backend
 EnvironmentFile=-/etc/downloader.env
 
+# --no-proxy-headers: la IP del cliente se toma del par que abre la conexión.
+# Antes ponía --proxy-headers --forwarded-allow-ips='*', que significa «me creo
+# la cabecera X-Forwarded-For de quien sea»: cualquiera podía inventarse una IP
+# distinta en cada petición y saltarse el límite por completo.
+# Si pones un proxy inverso delante (Caddy, Nginx), NO vuelvas a --proxy-headers:
+# declara su dirección en VDL_TRUSTED_PROXIES dentro de /etc/downloader.env.
 ExecStart=/opt/downloader/.venv/bin/python -m uvicorn app.main:app \
-    --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+    --host 0.0.0.0 --port 8000 --no-proxy-headers
 
 # --- Resiliencia ---------------------------------------------------------
 # El actualizador solicita el reinicio saliendo con código 0 tras aplicar una

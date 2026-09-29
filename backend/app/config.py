@@ -34,7 +34,15 @@ CLEANUP_INTERVAL_SECONDS = _env_int("VDL_CLEANUP_INTERVAL", 60)
 MAX_CONCURRENT_JOBS = _env_int("VDL_MAX_CONCURRENT_JOBS", 2)
 
 # Tamaño máximo aceptado por archivo, en MB. 0 = sin límite.
+# En producción conviene ponerlo: sin tope, un 4K largo puede llenar el disco.
 MAX_FILESIZE_MB = _env_int("VDL_MAX_FILESIZE_MB", 0)
+
+# Minutos que puede estar un trabajo en curso antes de darlo por colgado.
+# El recolector de basura NUNCA borra un trabajo activo antes de este plazo:
+# hacerlo le quita el archivo al descargador a medio escribir, y el espacio
+# ocupado deja de ser recuperable hasta que el subproceso termina.
+# Debe ser mayor que la descarga legítima más larga que esperes.
+ACTIVE_JOB_MAX_MINUTES = _env_int("VDL_ACTIVE_JOB_MAX_MINUTES", 120)
 
 # Timeout de la extracción de metadatos (segundos).
 PARSE_TIMEOUT = _env_int("VDL_PARSE_TIMEOUT", 60)
@@ -42,6 +50,11 @@ PARSE_TIMEOUT = _env_int("VDL_PARSE_TIMEOUT", 60)
 # --- Rate limiting ----------------------------------------------------------
 RATE_LIMIT_REQUESTS = _env_int("VDL_RATE_LIMIT_REQUESTS", 20)
 RATE_LIMIT_WINDOW_SECONDS = _env_int("VDL_RATE_LIMIT_WINDOW", 60)
+
+# Cupo aparte para entregar archivos. Es más alto a propósito: reproducir un
+# vídeo con saltos dispara muchas peticiones de rango, y no deben gastar el
+# cupo de los análisis ni bloquear la reproducción.
+RATE_LIMIT_FILES_REQUESTS = _env_int("VDL_RATE_LIMIT_FILES_REQUESTS", 120)
 
 # --- Seguridad --------------------------------------------------------------
 # Lista blanca de dominios. Vacía = permitir todos los que yt-dlp soporte.
@@ -54,6 +67,20 @@ ALLOWED_DOMAINS = [
 
 # Archivo de cookies (formato Netscape) para contenido que requiere sesión.
 COOKIES_FILE = os.getenv("VDL_COOKIES_FILE", "")
+
+# Proxies de confianza (IP o red CIDR, separadas por comas). Solo si la
+# petición llega desde una de ellas se cree la cabecera X-Forwarded-For.
+#
+# Vacío (recomendado si el servicio está expuesto directamente) = la IP del
+# cliente es siempre la del par que abre la conexión, que es el único dato que
+# el cliente no puede falsificar.
+#
+# Solo tiene sentido rellenarlo detrás de un proxy inverso propio. NUNCA pongas
+# "*": eso devuelve el problema, porque cualquiera puede inventarse la cabecera
+# y saltarse el límite de peticiones.
+TRUSTED_PROXIES = [
+    p.strip() for p in os.getenv("VDL_TRUSTED_PROXIES", "").split(",") if p.strip()
+]
 
 # --- FFmpeg -----------------------------------------------------------------
 # Ruta explícita al binario o a su carpeta. Si está vacío se autodetecta.
@@ -212,3 +239,53 @@ GALLERY_MAX = max(1, _env_int("VDL_GALLERY_MAX", 12))
 # Por debajo de esta cantidad el carrusel no se muestra: una fila con una sola
 # tarjeta se ve rota, y es peor que no enseñar nada.
 GALLERY_MIN_ITEMS = max(1, _env_int("VDL_GALLERY_MIN", 2))
+
+
+# ===========================================================================
+# Editor de audio
+#
+# Cortar, cambiar volumen, unir y fundir audio con el FFmpeg que ya está
+# instalado. Todo se procesa en el servidor, así que lo que hay que acotar aquí
+# es el consumo: cuánto se puede subir, cuánto puede durar y cuánto tiempo vive
+# lo editado. Sin estos topes, un editor público es una forma gratis de llenar
+# el disco de otro.
+# ===========================================================================
+EDITOR_ENABLED = _env_bool("VDL_EDITOR_ENABLED", True)
+
+# Carpeta propia, fuera de `storage/`. Si viviera dentro, el recolector de
+# descargas se llevaría por delante las fuentes de audio al cumplirse el TTL de
+# los archivos temporales (15 minutos por defecto).
+EDITOR_DIR = Path(os.getenv("VDL_EDITOR_DIR", BASE_DIR / "editor")).resolve()
+
+# Tamaño máximo de un audio subido, en MB.
+EDITOR_MAX_UPLOAD_MB = _env_int("VDL_EDITOR_MAX_UPLOAD_MB", 100)
+
+# Duración máxima de una fuente. Acota el trabajo de exportar: una hora de audio
+# ya tarda en codificar, y el tiempo de CPU es lo que se está regalando.
+EDITOR_MAX_MINUTES = _env_int("VDL_EDITOR_MAX_MINUTES", 60)
+
+# Cuántos tramos puede tener un montaje. Cada tramo es una entrada más de
+# FFmpeg, así que el número tiene un coste real.
+EDITOR_MAX_CLIPS = _env_int("VDL_EDITOR_MAX_CLIPS", 60)
+
+# Cuántos audios pueden estar cargados a la vez en el servidor.
+EDITOR_MAX_ASSETS = _env_int("VDL_EDITOR_MAX_ASSETS", 40)
+
+# Horas que se conserva un audio cargado (una sesión de edición).
+EDITOR_ASSET_TTL_HOURS = _env_int("VDL_EDITOR_ASSET_TTL_HOURS", 6)
+
+# Minutos que se conserva una exportación antes de borrarse sola.
+EDITOR_RENDER_TTL_MINUTES = _env_int("VDL_EDITOR_RENDER_TTL_MINUTES", 30)
+
+# Frecuencia de muestreo del montaje. Fija a propósito: `concat` necesita que
+# todas las entradas coincidan, y mezclar fuentes de 44,1 y 48 kHz sin
+# convertirlas daría un resultado con saltos.
+EDITOR_SAMPLE_RATE = _env_int("VDL_EDITOR_SAMPLE_RATE", 44100)
+
+# Puntos de onda por segundo que se calculan para dibujar la línea de tiempo.
+# Los archivos largos usan menos (se recalcula para no devolver un JSON enorme).
+EDITOR_PEAKS_PER_SECOND = _env_int("VDL_EDITOR_PEAKS_PER_SECOND", 20)
+
+# Cupo de peticiones del editor: subir, exportar y consultar. Va aparte del cupo
+# general para que editar audio no consuma el derecho a analizar enlaces.
+RATE_LIMIT_AUDIO_REQUESTS = _env_int("VDL_RATE_LIMIT_AUDIO_REQUESTS", 60)

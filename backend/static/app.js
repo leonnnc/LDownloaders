@@ -25,7 +25,10 @@
     barFill: $("bar-fill"),
     progressFile: $("progress-file"),
     downloadLink: $("download-link"),
+    editLink: $("edit-link"),
     brand: $("brand"),
+    secretMenu: $("secret-menu"),
+    secretMenuBackdrop: $("secret-menu-backdrop"),
     ffmpegWarning: $("ffmpeg-warning"),
     ffmpegHint: $("ffmpeg-hint"),
     gallery: $("gallery"),
@@ -191,6 +194,7 @@
     clearError();
     el.progressCard.classList.remove("hidden");
     el.downloadLink.classList.add("hidden");
+    el.editLink.classList.add("hidden");
     el.progressLabel.textContent = "Encolando…";
     el.progressPct.textContent = "0%";
     el.barFill.style.width = "0%";
@@ -255,6 +259,13 @@
           el.downloadLink.setAttribute("download", job.filename || "");
           el.downloadLink.classList.remove("hidden");
           el.downloadLink.click(); // inicia la descarga automáticamente
+
+          // Un MP3 recién descargado se puede editar sin volver a subirlo: el
+          // editor lo trae del almacén temporal por su identificador.
+          if (kind === "mp3") {
+            el.editLink.href = `/editor?job=${encodeURIComponent(jobId)}`;
+            el.editLink.classList.remove("hidden");
+          }
 
           // Acaba de entrar una descarga: el carrusel se refresca para incluirla.
           loadGallery();
@@ -561,15 +572,21 @@
     el.galleryTrack.querySelectorAll("video").forEach((v) => v.pause());
   });
 
-  /* ---------------- acceso invisible al panel ----------------
+  /* ---------------- el menú del sistema (invisible) ----------------
 
-     El panel de control (/monitor) no aparece en ningún menú, botón ni pie de
-     página: no hay ninguna pista visual de que exista. La entrada es esta,
-     discreta:
+     Ni el editor de audio (/editor) ni el panel de control (/monitor) aparecen
+     en la página: no hay ningún botón, tarjeta ni enlace que los mencione. Lo
+     único que existe es este menú, y estas son las formas de abrirlo:
 
        · Cinco toques seguidos sobre el logotipo «Downloader» (ratón o dedo).
-       · O el atajo Ctrl + Alt + M en el teclado.
-       · O escribiendo /monitor a mano en la barra de direcciones.
+       · Mantener pulsado el logotipo 0,7 s.
+       · El atajo Ctrl + Alt + E.
+
+     Dentro hay dos entradas: «Editor de Audio» y «Panel de control». Cinco
+     toques llevaba antes directo al panel; ahora abre el menú, y el panel sigue
+     a un toque dentro de él (o directo con Ctrl + Alt + M).
+
+     Escribir /monitor o /editor a mano en la barra de direcciones sigue funcionando.
 
      Cambia ACCESS_TAPS si quieres una combinación más larga.
      ----------------------------------------------------------- */
@@ -577,19 +594,41 @@
   const ACCESS_TAPS = 5;
   const ACCESS_WINDOW_MS = 2500;
 
+  // Cuánto hay que mantener pulsado el logotipo para que aparezca el menú
+  // invisible: un toque normal no lo abre, hace falta aguantar.
+  const SECRET_HOLD_MS = 700;
+
   function installHiddenAccess() {
     let taps = 0;
     let lastTap = 0;
 
+    // Marca que el menú invisible se acaba de abrir manteniendo pulsado el
+    // logotipo. Sirve para tragarse el clic que llega al soltar: el logotipo
+    // apunta a esta misma portada, así que ese clic la recargaría y el menú se
+    // cerraría en el mismo instante en que aparece.
+    let openedByHold = false;
+
     if (el.brand) {
-      el.brand.addEventListener("click", () => {
+      el.brand.addEventListener("click", (event) => {
+        // El clic que termina un gesto de mantener pulsado no cuenta: ni suma
+        // toques del panel ni navega.
+        if (openedByHold) {
+          openedByHold = false;
+          event.preventDefault();
+          return;
+        }
+
         const now = Date.now();
         taps = now - lastTap > ACCESS_WINDOW_MS ? 1 : taps + 1;
         lastTap = now;
 
         if (taps >= ACCESS_TAPS) {
           taps = 0;
-          window.location.href = "/monitor";
+          // Cortar la navegación es imprescindible: el logotipo apunta a esta
+          // misma portada, así que sin esto el quinto toque la recargaría y el
+          // menú aparecería y desaparecería en el mismo instante.
+          event.preventDefault();
+          openMenu();
         }
       });
     }
@@ -599,6 +638,57 @@
         e.preventDefault();
         window.location.href = "/monitor";
       }
+    });
+
+    // --- El menú invisible -------------------------------------------------
+    // Mantener pulsado el logotipo lo abre. Hasta ese momento el menú no ocupa
+    // nada en la página: no hay botón, ni texto, ni pista de que exista.
+    let holdTimer = null;
+
+    const openMenu = () => {
+      if (!el.secretMenu) return;
+      el.secretMenu.classList.remove("hidden");
+      const first = el.secretMenu.querySelector(".secret-menu-item");
+      if (first) first.focus();
+    };
+
+    const closeMenu = () => {
+      if (el.secretMenu) el.secretMenu.classList.add("hidden");
+    };
+
+    if (el.brand && el.secretMenu) {
+      el.brand.addEventListener("pointerdown", () => {
+        openedByHold = false;
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(() => {
+          openedByHold = true;
+          openMenu();
+        }, SECRET_HOLD_MS);
+      });
+
+      // Si se suelta antes de tiempo, o el dedo se va, no se abre nada.
+      for (const type of ["pointerup", "pointerleave", "pointercancel"]) {
+        el.brand.addEventListener(type, () => clearTimeout(holdTimer));
+      }
+
+      // En el móvil, mantener pulsado saca el menú del sistema (copiar, abrir en
+      // otra pestaña) justo cuando aparece el nuestro. Solo se corta cuando el
+      // menú que se abrió es el nuestro; al botón derecho normal no se le toca.
+      el.brand.addEventListener("contextmenu", (event) => {
+        if (openedByHold) event.preventDefault();
+      });
+    }
+
+    if (el.secretMenuBackdrop) {
+      el.secretMenuBackdrop.addEventListener("click", closeMenu);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        openMenu();
+      }
+      if (e.key === "Escape") closeMenu();
     });
   }
 

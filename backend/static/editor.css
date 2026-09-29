@@ -1,0 +1,430 @@
+/* =========================================================
+   Editor de audio — hoja de estilos propia.
+
+   Reutiliza los tokens de style.css (colores, radios, sombras), así que
+   hereda el modo claro y el oscuro sin duplicar nada. Aquí solo vive lo que
+   el editor añade: línea de tiempo, forma de onda y rejillas de ajustes.
+   ========================================================= */
+
+/* La línea de tiempo necesita algo más de ancho que la portada. */
+.wrap { max-width: 1040px; }
+
+.topbar-tag {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* Botón pequeño: hay muchos ajustes y no deben competir con las acciones
+   principales (añadir, exportar). */
+.btn-mini {
+  padding: 6px 11px;
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn-mini:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn-mini:disabled { opacity: .5; cursor: not-allowed; }
+
+.ed-hero { padding: 18px 0 4px; }
+.ed-hero h1 { font-size: clamp(24px, 5vw, 36px); }
+
+/* Cabecera de tarjeta: título a la izquierda, controles a la derecha. */
+.ed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.ed-head h2 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+
+.ed-transport { display: flex; align-items: center; gap: 10px; }
+.ed-transport .nav-btn { width: 34px; height: 34px; font-size: 14px; }
+
+/* ---------- 1 · Audios ---------- */
+.ed-add {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.asset-list { display: flex; flex-direction: column; gap: 8px; }
+
+.asset-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.asset-info { min-width: 0; flex: 1 1 220px; }
+.asset-name {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asset-meta { margin: 2px 0 0; font-size: 11.5px; color: var(--text-3); }
+.asset-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.recent {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.recent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+/* ---------- 2 · Línea de tiempo ---------- */
+.tl {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.tl-scroll {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 148px;
+  padding-bottom: 6px;
+}
+
+.tl-ruler {
+  position: relative;
+  height: 22px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  background: var(--surface);
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-3);
+  padding-left: 3px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.tl-clips {
+  display: flex;
+  /* Sin separación ni relleno lateral: así el ancho es el tiempo multiplicado
+     por la escala y el cursor cae exactamente sobre el tramo que suena. */
+  gap: 0;
+  padding: 10px 0;
+  min-height: 104px;
+  align-items: stretch;
+}
+
+.tl-clip {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+}
+.tl-clip.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.tl-clip.dragging { opacity: .45; }
+.tl-clip.drop-target { border-color: var(--accent); }
+.tl-clip.muted { opacity: .6; }
+
+.tl-clip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.tl-clip-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+.tl-clip-x {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 6px;
+}
+.tl-clip-x:hover { background: var(--danger-bg); color: var(--danger-text); }
+
+.tl-clip-wave { display: block; width: 100%; height: 46px; }
+
+.tl-clip-foot {
+  display: flex;
+  gap: 4px;
+  padding: 3px 6px 5px;
+  flex-wrap: wrap;
+}
+.tl-badge {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.tl-badge.gain { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--accent); }
+.tl-badge.mute { border-color: var(--danger-border); color: var(--danger-text); background: var(--danger-bg); }
+
+/* El cursor de reproducción: una línea que atraviesa toda la pista. */
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--danger-text);
+  pointer-events: none;
+  transform: translateX(0);
+  opacity: .85;
+  z-index: 3;
+}
+
+/* ---------- 3 · Tramo elegido ---------- */
+#wave {
+  display: block;
+  width: 100%;
+  height: 140px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  touch-action: none;
+  cursor: ew-resize;
+}
+
+.wave-tools {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.mini-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.mini-field input {
+  width: 92px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.clip-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.clip-grid output { font-size: 12px; color: var(--text-3); }
+.clip-grid input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* ---------- Inspector del tramo (dentro de la tarjeta de edicion) ----------
+   Escuchar y cortar son la misma tarea: el inspector deja de ser una tarjeta
+   aparte y se separa con una linea, no con otro marco. */
+#clip-card {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.ed-head h3 { margin: 0; font-size: 14px; letter-spacing: -.01em; }
+
+/* ---------- 3 · Exportar ---------- */
+.export-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.export-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.export-grid input,
+.export-grid select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.export-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+#export-progress { margin-top: 14px; }
+
+/* ---------- Arrastrar archivos ---------- */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+.drop-overlay-box {
+  padding: 26px 34px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 15px;
+  color: var(--accent);
+}
+
+/* ---------- Controles de reproducción ---------- */
+.transport {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.transport .nav-btn {
+  min-width: 44px;
+  height: 34px;
+  padding: 0 9px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+/* El botón de reproducir manda: es el que más se pulsa. */
+.transport .nav-btn-play {
+  min-width: 54px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-size: 14px;
+}
+.transport .nav-btn-play:hover:not(:disabled) { background: var(--accent-hover); color: #fff; }
+.transport .nav-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.speed-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.speed-field select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.scrub-wrap { margin-bottom: 10px; }
+#scrub {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+#scrub:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- Móvil ---------- */
+@media (max-width: 620px) {
+  .ed-hero h1 { font-size: 24px; }
+  .ed-head { align-items: flex-start; }
+  .tl-scroll { min-height: 132px; }
+  .tl-clip-wave { height: 38px; }
+  .asset-actions { width: 100%; }
+  .wave-tools { gap: 6px; }
+  .transport { gap: 4px; padding: 6px; }
+  .transport .nav-btn { min-width: 36px; height: 32px; padding: 0 6px; font-size: 11.5px; }
+  .speed-field { margin-left: 0; }
+  .mini-field input { width: 78px; }
+}

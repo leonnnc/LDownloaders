@@ -120,6 +120,9 @@ body {
      entrada discreta al panel (5 toques) y no debe parecer un botón. */
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
+  /* Sin zoom por doble toque: el logotipo recibe toques rápidos seguidos. */
+  touch-action: manipulation;
   cursor: default;
 }
 
@@ -152,6 +155,14 @@ body {
   transition: background .15s;
 }
 .badge-link:hover { background: var(--accent-soft); }
+
+/* Botón visible del editor en la barra superior: algo más grande que una
+   píldora de navegación, para que se lea como un botón de verdad. */
+.topbar-cta {
+  font-size: 13px;
+  padding: 8px 15px;
+  font-weight: 550;
+}
 .badge.ok { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); color: var(--success); }
 .badge.warn { border-color: var(--warn-border); background: var(--warn-bg); color: var(--warn-text); }
 
@@ -461,6 +472,54 @@ body {
 .btn-success:hover { background: var(--success-hover); }
 
 /* ---------- Chips ---------- */
+/* ---------- Menú invisible ---------- */
+/* No tiene ninguna pista visual a propósito: se abre manteniendo pulsado el
+   logotipo —el gesto discreto que ya usa el panel de control— o con Ctrl+Alt+E.
+   Lo que se ve al abrirlo es solo su contenido. */
+.secret-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.secret-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  cursor: default;
+  background: color-mix(in srgb, var(--bg) 68%, transparent);
+  backdrop-filter: blur(2px);
+}
+.secret-menu-panel {
+  position: relative;
+  min-width: 220px;
+  max-width: calc(100vw - 40px);
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.secret-menu-item {
+  display: block;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 15px;
+  text-decoration: none;
+}
+.secret-menu-item:hover,
+.secret-menu-item:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .chip {

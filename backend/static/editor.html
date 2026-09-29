@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Editor de audio · Descargador</title>
+  <meta name="description" content="Corta, une, cambia el volumen y aplica fundidos a tus MP3. Se procesa en el servidor con FFmpeg." />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/editor.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⬇️</text></svg>" />
+</head>
+<body>
+  <div class="glow" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">⬇</span>
+      <span class="brand-name">Downloader</span>
+    </a>
+    <span class="topbar-tag">Editor de audio</span>
+  </header>
+
+  <main class="wrap">
+    <section class="hero ed-hero">
+      <h1>Recorta, une y ajusta<br /><span class="grad">tu audio</span></h1>
+      <p class="sub">
+        Sube un MP3 o trae uno que acabas de descargar. Recorta tramos, cambia el volumen,
+        pega varios audios en uno y expórtalo en el formato que quieras.
+      </p>
+    </section>
+
+    <div id="editor-error" class="alert alert-error hidden" role="alert"></div>
+    <div id="editor-warn" class="alert alert-warn hidden"></div>
+    <div id="editor-loading" class="card"><p class="muted small">Cargando el editor…</p></div>
+
+    <!-- 1 · Audios de trabajo ------------------------------------------------->
+    <section class="card hidden" id="sources-card">
+      <div class="ed-head">
+        <h2>1 · Audios</h2>
+        <span class="muted small" id="limits-note"></span>
+      </div>
+
+      <div class="ed-add">
+        <label class="btn btn-primary" for="file-input">Añadir audio</label>
+        <input
+          type="file"
+          id="file-input"
+          class="hidden"
+          multiple
+          accept=".mp3,.wav,.ogg,.m4a,.flac,.webm,.wma,audio/*"
+        />
+        <button class="btn" type="button" id="btn-recent">Traer una descarga reciente</button>
+        <span class="muted small">o arrastra archivos a esta tarjeta</span>
+      </div>
+
+      <div id="recent-box" class="recent hidden">
+        <div class="recent-head">
+          <strong>Descargas de esta sesión</strong>
+          <button class="btn btn-mini" type="button" id="btn-recent-close">Cerrar</button>
+        </div>
+        <div id="recent-list"></div>
+        <p class="muted small">
+          Son los MP3 ya descargados que siguen en el almacén temporal (15 minutos).
+        </p>
+      </div>
+
+      <div id="upload-progress" class="hidden">
+        <div class="bar"><div class="bar-fill" id="upload-bar"></div></div>
+        <p class="muted small" id="upload-text"></p>
+      </div>
+
+      <div id="asset-list" class="asset-list"></div>
+      <p class="muted small hidden" id="assets-empty">
+        Todavía no hay audios cargados.
+      </p>
+    </section>
+
+    <!-- 2 · Línea de tiempo -------------------------------------------------->
+    <section class="card hidden" id="timeline-card">
+      <div class="ed-head">
+        <h2>2 · Editar</h2>
+        <span class="mono" id="tl-time">0:00 / 0:00</span>
+      </div>
+
+      <!-- Controles de reproducción. Cada botón tiene su atajo de teclado. -->
+      <div class="transport" role="group" aria-label="Controles de reproducción">
+        <button class="nav-btn" type="button" id="btn-start"
+                title="Ir al inicio (Inicio)" aria-label="Ir al inicio">Inicio</button>
+        <button class="nav-btn" type="button" id="btn-back10"
+                title="Retroceder 10 s (Mayús + ←)" aria-label="Retroceder diez segundos">−10</button>
+        <button class="nav-btn" type="button" id="btn-back5"
+                title="Retroceder 5 s" aria-label="Retroceder cinco segundos">−5</button>
+        <button class="nav-btn nav-btn-play" type="button" id="btn-play"
+                title="Reproducir o pausar (Espacio)" aria-label="Reproducir">▶</button>
+        <button class="nav-btn" type="button" id="btn-fwd5"
+                title="Avanzar 5 s" aria-label="Avanzar cinco segundos">+5</button>
+        <button class="nav-btn" type="button" id="btn-fwd10"
+                title="Avanzar 10 s (Mayús + →)" aria-label="Avanzar diez segundos">+10</button>
+        <button class="nav-btn" type="button" id="btn-end"
+                title="Ir al final (Fin)" aria-label="Ir al final">Fin</button>
+        <button class="nav-btn" type="button" id="btn-loop"
+                title="Repetir el montaje sin parar" aria-label="Repetir el montaje"
+                aria-pressed="false">↻</button>
+        <label class="speed-field">Velocidad
+          <select id="speed" aria-label="Velocidad de reproducción">
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="scrub-wrap">
+        <input type="range" id="scrub" min="0" max="0" step="0.01" value="0"
+               aria-label="Posición de reproducción" />
+      </div>
+
+      <div class="tl" id="timeline">
+        <div class="tl-scroll" id="tl-scroll">
+          <div class="tl-ruler" id="tl-ruler" role="slider" tabindex="0"
+               aria-label="Cursor de la línea de tiempo" aria-valuemin="0" aria-valuenow="0"></div>
+          <div class="tl-clips" id="tl-clips"></div>
+          <div class="tl-playhead" id="tl-playhead" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <p class="muted small">
+        Arrastra las tarjetas para cambiar el orden · toca el tiempo o la barra de posición para
+        mover el cursor · la ✕ quita un tramo.
+        <kbd>Espacio</kbd> reproduce o pausa, <kbd>←</kbd> <kbd>→</kbd> mueven un segundo
+        (<kbd>Mayús</kbd> los hace diez), <kbd>Inicio</kbd> y <kbd>Fin</kbd> van a los extremos,
+        <kbd>Supr</kbd> borra el tramo elegido y <kbd>Ctrl</kbd>+<kbd>Z</kbd> deshace.
+      </p>
+      <p class="muted small hidden" id="tl-empty">
+        Añade un audio y pulsa «A la línea» para empezar a montar.
+      </p>
+
+      <!-- El inspector del tramo vive dentro de esta misma tarjeta: escuchar y
+           cortar son la misma tarea, así que no se reparten en dos sitios. -->
+      <div class="hidden" id="clip-card">
+        <div class="ed-head">
+          <h3>Tramo elegido</h3>
+          <span class="muted small" id="clip-title"></span>
+        </div>
+
+        <canvas id="wave" height="140" aria-label="Forma de onda del tramo"></canvas>
+        <p class="muted small">
+          Arrastra los tiradores para recortar. Lo que quede fuera del sombreado no se exporta.
+        </p>
+
+        <div class="wave-tools">
+          <label class="mini-field">Inicio
+            <input type="number" id="in-start" step="0.1" min="0" inputmode="decimal" />
+          </label>
+          <label class="mini-field">Fin
+            <input type="number" id="in-end" step="0.1" min="0" inputmode="decimal" />
+          </label>
+          <button class="btn btn-mini" type="button" id="btn-full">Tramo completo</button>
+          <button class="btn btn-mini" type="button" id="btn-split">Cortar en el cursor</button>
+          <button class="btn btn-mini" type="button" id="btn-duplicate">Duplicar</button>
+          <button class="btn btn-mini" type="button" id="btn-listen-clip">Escuchar el tramo</button>
+        </div>
+
+        <div class="clip-grid">
+          <label>Volumen <output id="out-gain">0 dB</output>
+            <input type="range" id="in-gain" min="-60" max="24" step="1" value="0" />
+          </label>
+          <label>Fundido de entrada <output id="out-fadein">0 s</output>
+            <input type="range" id="in-fadein" min="0" max="10" step="0.1" value="0" />
+          </label>
+          <label>Fundido de salida <output id="out-fadeout">0 s</output>
+            <input type="range" id="in-fadeout" min="0" max="10" step="0.1" value="0" />
+          </label>
+        </div>
+
+        <div class="wave-tools">
+          <button class="btn btn-mini" type="button" id="btn-mute">Silenciar</button>
+          <button class="btn btn-mini" type="button" id="btn-gain-all">Volumen a todos</button>
+          <button class="btn btn-mini" type="button" id="btn-fade-all">Fundidos a todos</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 · Exportar --------------------------------------------------------->
+    <section class="card hidden" id="export-card">
+      <div class="ed-head">
+        <h2>3 · Exportar</h2>
+        <button class="btn btn-mini" type="button" id="btn-clear">Vaciar la línea</button>
+      </div>
+
+      <div class="export-grid">
+        <label>Nombre del archivo
+          <input type="text" id="out-name" placeholder="audio-editado" maxlength="120" />
+        </label>
+        <label>Formato
+          <select id="out-format"></select>
+        </label>
+        <label id="bitrate-wrap">Calidad
+          <select id="out-bitrate">
+            <option value="128">128 kbps</option>
+            <option value="192" selected>192 kbps</option>
+            <option value="256">256 kbps</option>
+            <option value="320">320 kbps</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="export-actions">
+        <button class="btn btn-success" type="button" id="btn-export">Exportar audio</button>
+        <span class="muted small" id="export-note"></span>
+      </div>
+
+      <div id="export-progress" class="hidden">
+        <div class="bar"><div class="bar-fill" id="export-bar"></div></div>
+        <p class="muted small" id="export-text"></p>
+        <a class="btn btn-success hidden" id="export-link" download>Guardar archivo</a>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <p>
+        El audio que subes se guarda en el servidor mientras editas y se borra solo
+        (las fuentes a las 6 h, las exportaciones a los 30 min).
+        Úsalo solo con contenido que tengas derecho a editar.
+      </p>
+      <p class="foot-links">
+        <a href="/">Descargador</a>
+        <span aria-hidden="true">·</span>
+        <a href="/terminos">Términos de Servicio</a>
+        <span aria-hidden="true">·</span>
+        <a href="/privacidad">Política de Privacidad</a>
+      </p>
+    </footer>
+  </main>
+
+  <div id="drop-overlay" class="drop-overlay hidden">
+    <div class="drop-overlay-box">Suelta el audio para cargarlo</div>
+  </div>
+
+  <script src="/editor.js"></script>
+</body>
+</html>

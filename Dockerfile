@@ -33,4 +33,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health').read()" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+# --no-proxy-headers a propósito. Con --proxy-headers (y su valor por defecto,
+# que solo confía en 127.0.0.1) pasan dos cosas malas: si el proxy corre en el
+# mismo host se acepta una cabecera X-Forwarded-For falsificable, y si corre en
+# otro contenedor no se acepta y todos los usuarios acaban compartiendo un único
+# cupo de peticiones. Aquí se decide en un solo sitio, en VDL_TRUSTED_PROXIES.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

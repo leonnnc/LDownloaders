@@ -21,6 +21,15 @@ services:
       VDL_MAX_CONCURRENT_JOBS: "2"
       VDL_RATE_LIMIT_REQUESTS: "20"
 
+      # Tope de tamaño por archivo, en MB. 0 = sin límite. En este compose el
+      # puerto 8000 se publica directamente, así que conviene ponerle tope.
+      VDL_MAX_FILESIZE_MB: "2048"
+
+      # El servicio no está detrás de ningún proxy aquí (publica su propio
+      # puerto), así que NO se cree ninguna cabecera X-Forwarded-For. Si añades
+      # un proxy delante, declara su red aquí; nunca "*".
+      # VDL_TRUSTED_PROXIES: "172.16.0.0/12"
+
       # --- Mantenimiento automático del motor --------------------------
       # Actualiza yt-dlp, valida con canarios y revierte si algo se rompe.
       VDL_AUTO_UPDATE: "true"

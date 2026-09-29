@@ -180,15 +180,31 @@ class JobStore:
         }
 
     # -- Limpieza -----------------------------------------------------------
+    # Estados en los que el trabajo todavía puede estar escribiendo en disco.
+    ACTIVE = ("queued", "processing")
+
     def purge_expired(self) -> int:
-        """Borra archivos y registros vencidos. Devuelve cuántos limpió."""
+        """Borra archivos y registros vencidos. Devuelve cuántos limpió.
+
+        Nunca borra un trabajo en curso por el TTL normal. Hacerlo le quita el
+        directorio a una descarga a medio escribir: el trabajo queda marcado
+        como vencido aunque el archivo esté creciendo, y en Linux el subproceso
+        sigue escribiendo en un archivo ya desvinculado, así que ese espacio ya
+        no lo puede recuperar nadie hasta que termine.
+
+        Un trabajo activo solo se da por colgado tras ACTIVE_JOB_MAX_MINUTES,
+        que es el plazo que se le concede a una descarga larga y legítima.
+        """
         ttl = config.FILE_TTL_MINUTES * 60
+        active_limit = config.ACTIVE_JOB_MAX_MINUTES * 60
         now = time.time()
         removed = 0
 
         for job in self.all_jobs():
-            reference = job.finished_at or job.created_at
-            if now - reference < ttl:
+            active = job.status in self.ACTIVE
+            reference = job.created_at if active else (job.finished_at or job.created_at)
+            limit = active_limit if active else ttl
+            if now - reference < limit:
                 continue
 
             # Borrar el directorio de trabajo del job.

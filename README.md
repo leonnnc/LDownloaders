@@ -71,6 +71,8 @@ downloader/
 │   ├── app/
 │   │   ├── main.py        API FastAPI, rate limiting, validación, admin
 │   │   ├── downloader.py  El motor: parse() y run_job() sobre yt-dlp
+│   │   ├── editor.py      Editor de audio: montaje con FFmpeg (corte, volumen, unión)
+│   │   ├── editor_api.py  Endpoints del editor (router propio, sin tocar main.py)
 │   │   ├── jobs.py        Trabajos en memoria + limpieza por TTL
 │   │   ├── media.py       Detección de FFmpeg
 │   │   ├── config.py      Configuración por variables de entorno
@@ -83,6 +85,7 @@ downloader/
 │   │   └── status.py      Estado del sistema (alimenta widget y panel)
 │   ├── static/
 │   │   ├── index.html …   Interfaz del descargador
+│   │   ├── editor.html …  Editor de audio (línea de tiempo, onda, exportar)
 │   │   ├── monitor.html … Panel de control (móvil, instalable)
 │   │   ├── terminos.html    Términos de Servicio
 │   │   └── privacidad.html  Política de Privacidad
@@ -100,6 +103,8 @@ downloader/
 ├── smoke_test.py          Prueba de humo de la API
 ├── smoke_resilience.py    Prueba de la capa de resiliencia
 ├── smoke_monitor.py       Prueba del widget, panel y restablecimiento
+├── smoke_seguridad.py    Prueba de SSRF, cupos, circuitos y recolector
+├── smoke_editor.py       Prueba del editor: montaje, onda y exportación
 ├── start.ps1 / start.sh
 └── storage/               Archivos temporales (se borran solos)
 ```
@@ -165,6 +170,30 @@ Los botones visibles que había antes —el enlace «Monitor» y la píldora de 
 El único aviso que sigue apareciendo al visitante es el de FFmpeg ausente, porque afecta
 de verdad a lo que puede descargar.
 
+### Cómo se entra al editor de audio (también invisible)
+
+El editor vive en el **mismo sitio pero con otro gesto**, para que no se confunda con los
+formatos de descarga: no hay tarjeta entre los formatos, ni enlace en el pie, ni texto en
+la página que lo mencione.
+
+| Entrada | Cómo |
+|---|---|
+| Cinco toques | Cinco toques seguidos en el logotipo: abre el menú del sistema |
+| Mantener pulsado | Deja el dedo o el ratón sobre «Downloader» 0,7 s: el mismo menú |
+| Atajo de teclado | `Ctrl` + `Alt` + `E` |
+| Desde el panel | Panel de control → tarjeta «Editor de audio» |
+| Dirección directa | `http://tu-servidor/editor` |
+
+El menú («menú del sistema») tiene dos entradas: **Editor de Audio** y **Panel de control**.
+Cinco toques era antes el salto directo al panel; ahora abre este menú, y el panel queda a un
+toque dentro de él (o directo con `Ctrl` + `Alt` + `M`). Los dos gestos del logotipo conviven:
+un toque normal no abre nada y mantener pulsado no suma toques. El tiempo del gesto se cambia
+en `backend/static/app.js` (`SECRET_HOLD_MS`).
+
+Queda además un acceso **contextual**, que no es un menú: al terminar una descarga en MP3
+aparece el botón «Editar el audio», que abre el editor con ese archivo ya cargado
+(`/editor?job=…`).
+
 Además, `GET /api/widget` devuelve un payload compacto y ya formateado, pensado
 específicamente para un widget de Android (texto corto + color, sin lógica), y
 soporta los botones de acción del widget.
@@ -215,6 +244,53 @@ servidor no pueden hacer nada).
 Se refresca cada 15 minutos — el mínimo que Android respeta de verdad; un widget no
 puede ser tiempo real. Detalles, fuentes y cómo recompilarlo en
 [ANDROID-WIDGET.md](ANDROID-WIDGET.md).
+
+---
+
+## Editor de audio
+
+`GET /editor` es un editor de audio en el navegador con el trabajo pesado en el
+servidor: **recortar**, **subir o bajar el volumen**, **unir varios audios** en el
+orden que quieras, **fundidos** de entrada y salida, y salida en **MP3, WAV, OGG o
+M4A**.
+
+Cómo se usa:
+
+1. **Añade audio** — sube un archivo del equipo (o arrástralo a la ventana) o trae
+   un MP3 que acabas de descargar, sin volver a subirlo.
+2. **Móntalo** — cada audio entra en la línea de tiempo como un tramo. Los tramos
+   se arrastran para cambiar el orden, se recortan con los tiradores de la forma
+   de onda, y cada uno lleva su volumen y sus fundidos.
+3. **Escúchalo** — controles de reproducción completos: reproducir y pausar,
+   ir al inicio y al final, saltos de ±5 y ±10 segundos, repetir el montaje sin
+   parar, velocidad de 0,75× a 2× y una barra de posición arrastrable. El volumen
+   y los fundidos se aplican en vivo, así que lo que oyes es lo que va a salir.
+   Con el teclado: <kbd>Espacio</kbd>, <kbd>←</kbd>/<kbd>→</kbd> (un segundo, o
+   diez con <kbd>Mayús</kbd>), <kbd>Inicio</kbd> y <kbd>Fin</kbd>, <kbd>Supr</kbd>
+   y <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
+4. **Expórtalo** — el servidor arma el montaje con FFmpeg y entrega el archivo.
+
+Decisiones que conviene conocer:
+
+* **El montaje vive en el navegador.** Hasta que no pulsas «Exportar» no se manda
+  nada: mover un tirador o cambiar un volumen no gasta red ni CPU del servidor.
+* **El corte busca dentro del archivo** (`-ss` en la entrada y `-t` para el tramo),
+  así que recortar el minuto 50 no obliga a decodificar los 49 anteriores.
+* **El comando de FFmpeg se arma como lista de argumentos**, nunca como cadena de
+  shell: los números del montaje llegan desde el navegador.
+* **El tipo de archivo se decide por sus primeros bytes**, no por la extensión ni
+  por lo que declare el cliente: lo que no sea audio se rechaza con un 415.
+* **Nada de lo editado entra en el historial ni en el carrusel público** — es
+  material de trabajo, no una descarga.
+* **La escucha ocurre en el navegador**: no hay transcodificación en vivo, y un MP3
+  largo no llena la memoria porque se usan los elementos `<audio>` con un nodo de
+  ganancia en lugar de decodificar el archivo entero.
+* Los audios cargados se borran solos a las 6 h; las exportaciones, a los 30 min.
+
+> Exportar consume CPU del servidor: el editor tiene su propio cupo de peticiones y
+> topes de tamaño, duración y tramos. En un servidor público, ponlo detrás de
+> `VDL_ADMIN_TOKEN` o desactívalo con `VDL_EDITOR_ENABLED=false` si no quieres
+> regalar tiempo de CPU.
 
 ---
 
@@ -308,6 +384,22 @@ solo se baja lo que el usuario elige.
 | `GET` | `/api/file/{job_id}` | Descarga el archivo |
 | `POST` | `/api/facebook/private` | `{"html":"..."}` → URLs de video extraídas |
 
+Editor de audio:
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/editor` | Editor: línea de tiempo, onda, escucha y exportación |
+| `GET` | `/api/audio/info` | Límites, formatos disponibles y audios cargados |
+| `GET` | `/api/audio/sources` | MP3 recién descargados, listos para editar |
+| `POST` | `/api/audio/upload?name=...` | Sube un audio (cuerpo crudo, sin multipart) |
+| `POST` | `/api/audio/from-job/{job_id}` | Trae una descarga de esta sesión al editor |
+| `GET` | `/api/audio/asset/{id}` | Reproduce un audio (con soporte de rangos) |
+| `GET` | `/api/audio/asset/{id}/peaks` | Picos de la onda para dibujar la línea de tiempo |
+| `DELETE` | `/api/audio/asset/{id}` | Borra un audio del servidor |
+| `POST` | `/api/audio/render` | Aplica el montaje → `render_id` (asíncrono) |
+| `GET` | `/api/audio/render/{id}` | Avance de la exportación |
+| `GET` | `/api/audio/render/{id}/file` | Descarga el archivo exportado |
+
 Documentación interactiva automática: **http://127.0.0.1:8000/docs**
 
 ---
@@ -339,6 +431,25 @@ Todas las variables son opcionales.
 | `VDL_GALLERY_ENABLED` | `true` | Muestra el carrusel de últimas descargas en la portada |
 | `VDL_GALLERY_MAX` | `12` | Tarjetas que ofrece el carrusel |
 | `VDL_GALLERY_MIN` | `2` | Por debajo de esto el carrusel no se muestra |
+| `VDL_TRUSTED_PROXIES` | vacío | IPs o CIDR de proxies de confianza: solo desde ellas se cree `X-Forwarded-For` |
+| `VDL_RATE_LIMIT_FILES_REQUESTS` | `120` | Cupo por IP para `/api/file` y la reproducción |
+| `VDL_ACTIVE_JOB_MAX_MINUTES` | `120` | Margen antes de que el recolector pueda borrar un trabajo en curso |
+
+Editor de audio:
+
+| Variable | Por defecto | Descripción |
+|---|---|---|
+| `VDL_EDITOR_ENABLED` | `true` | Habilita el editor y sus endpoints |
+| `VDL_EDITOR_DIR` | `backend/editor` | Carpeta de los audios del editor (fuera de `storage/`) |
+| `VDL_EDITOR_MAX_UPLOAD_MB` | `100` | Tamaño máximo de un audio subido |
+| `VDL_EDITOR_MAX_MINUTES` | `60` | Duración máxima de un audio |
+| `VDL_EDITOR_MAX_CLIPS` | `60` | Tramos máximos por montaje |
+| `VDL_EDITOR_MAX_ASSETS` | `40` | Audios cargados a la vez |
+| `VDL_EDITOR_ASSET_TTL_HOURS` | `6` | Horas que se conserva un audio cargado |
+| `VDL_EDITOR_RENDER_TTL_MINUTES` | `30` | Minutos que se conserva una exportación |
+| `VDL_EDITOR_SAMPLE_RATE` | `44100` | Frecuencia del montaje (todas las fuentes se convierten) |
+| `VDL_EDITOR_PEAKS_PER_SECOND` | `20` | Resolución de la forma de onda |
+| `VDL_RATE_LIMIT_AUDIO_REQUESTS` | `60` | Cupo del editor por ventana y por IP |
 
 Lista completa de variables de resiliencia: [RESILIENCIA.md](RESILIENCIA.md#13-referencia-variables-de-resiliencia)
 
@@ -355,6 +466,9 @@ Con el servidor corriendo:
 
 # Resiliencia: circuit breaker, reintentos, rollback, canarios y telemetría
 .venv\Scripts\python.exe smoke_resilience.py
+
+# Editor de audio: subida, onda, montaje con volumen y fundidos, y exportación
+.venv\Scripts\python.exe smoke_editor.py
 ```
 
 `smoke_resilience.py` cubre cuatro bloques: mecanismos offline (circuito, backoff,

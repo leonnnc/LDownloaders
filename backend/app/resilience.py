@@ -28,6 +28,56 @@ log = logging.getLogger("resilience")
 
 T = TypeVar("T")
 
+# Señales de que el problema es del SITIO (red, servidor, bloqueo) y no del
+# enlace concreto que trajo el usuario. Solo estas cuentan para abrir un
+# circuito: ver `_looks_like_site_failure`.
+SITE_FAILURE_MARKERS = (
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+    "remote end closed connection",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "network is unreachable",
+    "unable to download webpage",
+    "unable to connect",
+    "read error",
+    "http error 5",
+    "http error 429",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "too many requests",
+    "internal server error",
+    "ssl",
+    "certificate",
+)
+
+
+def _looks_like_site_failure(exc: BaseException) -> bool:
+    """¿El fallo apunta a que el sitio está mal, y no al enlace?
+
+    El circuito se abre SOLO con esto. Antes se abría con cualquier error que
+    no fuera «permanente conocido», lo que tenía dos consecuencias malas:
+
+    * Un usuario podía tumbar un sitio entero para todos los demás pegando
+      enlaces que devolvieran un error no listado (bastaban cinco, y algunos
+      fallan en menos de un segundo).
+    * Un cambio de formato de la web (que rompe la extracción pero no la red)
+      abría el circuito en vez de avisar. De eso ya se encargan los canarios,
+      que además distinguen «el sitio cambió» de «la red va mal».
+
+    La clasificación es por texto porque `parse` envuelve todo en `EngineError`
+    y conserva el mensaje original en `.raw`.
+    """
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    text = f"{exc} {getattr(exc, 'raw', '')}".lower()
+    return any(marker in text for marker in SITE_FAILURE_MARKERS)
+
 CLOSED = "cerrado"          # todo normal
 OPEN = "abierto"            # fallando rápido, sin intentos
 HALF_OPEN = "medio_abierto"  # dejando pasar un intento de prueba
@@ -216,11 +266,20 @@ def with_retry(
         except Exception as exc:  # noqa: BLE001 - se re-clasifica abajo
             last_error = exc
 
-            if should_retry and not should_retry(exc):
-                circuit.record_failure(str(exc))
+            # Un error permanente («este video no existe», «enlace no
+            # soportado») es un problema del enlace que trajo el usuario, no del
+            # sitio: no se reintenta y no cuenta para el circuito.
+            permanent = should_retry is not None and not should_retry(exc)
+
+            if permanent:
                 raise
 
-            circuit.record_failure(str(exc))
+            # Para el circuito hace falta algo más que «no es un error
+            # permanente conocido»: hay que ver una señal de que el sitio o la
+            # red fallan. Si no, cualquiera puede abrir un circuito con enlaces
+            # que devuelvan un error no listado.
+            if _looks_like_site_failure(exc):
+                circuit.record_failure(str(exc))
 
             if attempt >= attempts:
                 break

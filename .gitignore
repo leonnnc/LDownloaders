@@ -67,6 +67,16 @@ backend/update_state.json
 backend/history.jsonl
 history.jsonl
 
-# Informe interno de revision tecnica: describe fallos de seguridad que todavia
-# no estan corregidos. El repositorio es publico, asi que esto se queda fuera.
+# Informes internos de revision tecnica: describen fallos de seguridad que
+# todavia no estan corregidos. El repositorio es publico, asi que se quedan fuera.
 REVISION.md
+REVISION-*.md
+
+# Datos del editor de audio: los archivos que sube el usuario (y las
+# exportaciones) son suyos, no del repositorio. Caducan solos por TTL.
+backend/editor/
+
+# Capturas y diagnosticos de trabajo: no forman parte del servicio.
+shot-*.png
+diagnostico-menu/
+*.log.prev

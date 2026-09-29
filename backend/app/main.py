@@ -14,12 +14,17 @@ POST /api/facebook/private    -> extrae URLs desde el HTML pegado
 from __future__ import annotations
 
 import asyncio
+import hmac
+import ipaddress
 import logging
 import mimetypes
 import os
 import re
+import shutil
+import socket
 import threading
 import time
+import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -33,7 +38,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, downloader, history, pairing, updater
+from . import config, downloader, editor, editor_api, history, pairing, updater
 from . import status as system_status
 from .alerts import clear_history, send_alert
 from .canary import canaries
@@ -67,6 +72,16 @@ async def _cleanup_loop() -> None:
             removed = await asyncio.to_thread(store.purge_expired)
             if removed:
                 log.info("Limpiados %s archivos vencidos", removed)
+
+            # El editor tiene su propio ciclo: los audios cargados duran horas y
+            # las exportaciones minutos, no el TTL de las descargas.
+            cleaned = await asyncio.to_thread(editor.sweep)
+            if cleaned["assets_removed"] or cleaned["renders_removed"]:
+                log.info(
+                    "Editor: %s audios y %s exportaciones vencidas",
+                    cleaned["assets_removed"],
+                    cleaned["renders_removed"],
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -224,6 +239,21 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """Un fallo no previsto devuelve JSON, no un error en texto plano.
+
+    Sin esto, el cliente recibe «Internal Server Error» sin cuerpo y no puede
+    ni mostrar un mensaje. El detalle va al registro, no a la respuesta: un
+    volcado de pila puede revelar rutas internas y versiones.
+    """
+    log.exception("Error no controlado en %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor. Queda registrado."},
+    )
+
+
 @app.middleware("http")
 async def _track_app_presence(request: Request, call_next):
     """Anota cuándo habló el APK con el servidor.
@@ -239,6 +269,38 @@ async def _track_app_presence(request: Request, call_next):
     return await call_next(request)
 
 
+# Archivos de la interfaz que conviene revalidar siempre. Son cuatro y un 304
+# cuesta menos que un malentendido: sin esto, al cambiar un estilo el navegador
+# sigue pintando el viejo desde su caché y parece que el cambio no se hizo.
+_REVALIDATE_SUFFIXES = (".css", ".js", ".html", ".webmanifest")
+
+
+@app.middleware("http")
+async def _revalidate_interface(request: Request, call_next):
+    """Pide al navegador que confirme antes de usar la interfaz que guardó.
+
+    `no-cache` no quiere decir «no guardes», sino «pregúntame antes de usarlo»:
+    si el archivo no ha cambiado, el servidor responde 304 sin cuerpo y el coste
+    es una petición condicional mínima. A cambio, un cambio de CSS o de JS se ve
+    al recargar, sin tener que vaciar la caché a mano.
+    """
+    response = await call_next(request)
+    if request.method != "GET":
+        return response
+
+    # Además de los archivos con extensión, cuentan las páginas de dirección
+    # limpia: /, /editor, /monitor, /terminos y /privacidad no acaban en .html,
+    # así que sin esta comprobación se quedaban sin revalidar y el navegador
+    # seguía pintando la versión antigua de la interfaz —exactamente el sintoma
+    # de «hice un cambio y no lo veo»—. Se decide por el tipo de la respuesta.
+    is_page = request.url.path.endswith(_REVALIDATE_SUFFIXES) or response.headers.get(
+        "content-type", ""
+    ).startswith("text/html")
+    if is_page:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Rate limiting (en memoria; usar Redis si hay más de una instancia)
 # ---------------------------------------------------------------------------
@@ -246,21 +308,77 @@ _hits: Dict[str, Deque[float]] = defaultdict(deque)
 _hits_lock = threading.Lock()
 
 
+def _peer_ip(request: Request) -> str:
+    return request.client.host if request.client else "desconocida"
+
+
+def _is_trusted_proxy(ip: str) -> bool:
+    """¿La petición viene de un proxy nuestro?
+
+    Solo entonces se cree `X-Forwarded-For`. Esa cabecera la escribe el cliente
+    y cualquiera puede inventársela: fiarse de ella sin comprobar quién llama
+    convierte el límite de peticiones en un adorno.
+    """
+    if not config.TRUSTED_PROXIES:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for entry in config.TRUSTED_PROXIES:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """IP del cliente para el límite de peticiones.
+
+    Por defecto es la del par que abre la conexión: es el único dato que el
+    cliente no puede falsificar. Si hay un proxy propio delante, se lee la
+    ÚLTIMA entrada de `X-Forwarded-For`, que es la que añade ese proxy; las
+    anteriores puede haberlas puesto el cliente y no valen nada.
+    """
+    peer = _peer_ip(request)
+    if not _is_trusted_proxy(peer):
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+    return parts[-1] if parts else peer
 
 
-def rate_limit(request: Request) -> None:
+def rate_limit(
+    request: Request,
+    scope: str = "api",
+    limit: int | None = None,
+    window: int | None = None,
+) -> None:
+    """Cuenta la petición y lanza 429 si se pasó.
+
+    `scope` separa contadores: entregar un archivo y pedir un análisis no son
+    la misma clase de petición, y un contador compartido haría que ver un vídeo
+    consumiera el cupo de descargas. Una descarga con rangos puede generar
+    muchas peticiones seguidas, así que su cupo va aparte y más holgado.
+    """
     ip = _client_ip(request)
+    key = f"{scope}:{ip}"
     now = time.time()
-    window = config.RATE_LIMIT_WINDOW_SECONDS
-    limit = config.RATE_LIMIT_REQUESTS
+    window = window or config.RATE_LIMIT_WINDOW_SECONDS
+    limit = limit or config.RATE_LIMIT_REQUESTS
 
     with _hits_lock:
-        bucket = _hits[ip]
+        # Barrido oportunista: sin esto, cada IP que pasa una vez deja su
+        # entrada vacía para siempre y el diccionario crece sin fin (una
+        # entrada por petición en cuanto alguien rota la cabecera).
+        if len(_hits) > 10_000:
+            for stale in [k for k, v in _hits.items() if not v or now - v[-1] > window]:
+                _hits.pop(stale, None)
+
+        bucket = _hits[key]
         while bucket and now - bucket[0] > window:
             bucket.popleft()
         if len(bucket) >= limit:
@@ -278,8 +396,75 @@ def rate_limit(request: Request) -> None:
 # ---------------------------------------------------------------------------
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 
+# Nombres que nunca pueden ser un sitio público.
+_BLOCKED_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "[::1]",
+    "metadata.google.internal",
+}
+
+# Sufijos reservados para redes internas (RFC 6761/6762 y equivalentes).
+_BLOCKED_SUFFIXES = (
+    ".local",
+    ".localhost",
+    ".localdomain",
+    ".internal",
+    ".intranet",
+    ".home.arpa",
+    ".in-addr.arpa",
+    ".ip6.arpa",
+)
+
+
+# Redes que `is_private` de Python NO marca como privadas y sí son internas.
+# La más importante: 100.64.0.0/10 (espacio compartido de operador, el que usan
+# muchas redes domésticas y de empresa detrás del CGNAT del ISP).
+_EXTRA_BLOCKED_NETWORKS = (
+    "100.64.0.0/10",   # CGNAT / espacio compartido (RFC 6598)
+    "192.0.0.0/24",    # asignación IETF
+    "192.88.99.0/24",  # relay 6to4
+    "198.51.100.0/24",  # documentación
+    "203.0.113.0/24",  # documentación
+    "240.0.0.0/4",     # reservado (incluye 255.255.255.255)
+    "fc00::/7",        # direcciones locales únicas (IPv6)
+    "fe80::/10",       # enlace local (IPv6)
+    "64:ff9b::/96",    # traducción NAT64
+)
+
+
+def _is_blocked_ip(ip: str) -> bool:
+    """¿Es una dirección interna, reservada o no enrutable?"""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        # No se pudo interpretar: ante la duda, se bloquea.
+        return True
+
+    if (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    ):
+        return True
+
+    for network in _EXTRA_BLOCKED_NETWORKS:
+        try:
+            if addr in ipaddress.ip_network(network):
+                return True
+        except ValueError:
+            continue
+    return False
+
 
 def validate_url(url: str) -> str:
+    """Comprobaciones baratas del enlace (sin salir a la red)."""
     url = (url or "").strip()
     if not _URL_RE.match(url):
         raise HTTPException(400, "El enlace debe empezar por http:// o https://")
@@ -288,9 +473,17 @@ def validate_url(url: str) -> str:
     if not host:
         raise HTTPException(400, "El enlace no es válido.")
 
-    # Bloquea SSRF hacia la red interna.
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local"):
+    if host in _BLOCKED_HOSTS or host.endswith(_BLOCKED_SUFFIXES):
         raise HTTPException(400, "Ese dominio no está permitido.")
+
+    # Una IP literal se comprueba aquí mismo: no hay nada que resolver.
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        pass
+    else:
+        if _is_blocked_ip(host.strip("[]")):
+            raise HTTPException(400, "Ese enlace apunta a una dirección interna.")
 
     if config.ALLOWED_DOMAINS and not any(
         host == d or host.endswith("." + d) for d in config.ALLOWED_DOMAINS
@@ -298,6 +491,40 @@ def validate_url(url: str) -> str:
         raise HTTPException(400, f"Dominio no soportado: {host}")
 
     return url
+
+
+def assert_public_target(url: str) -> None:
+    """Resuelve el dominio y rechaza destinos de red interna (SSRF).
+
+    Comparar el texto del dominio no basta: `localhost`, `.local` y poco más
+    dejaban pasar `192.168.1.1`, `169.254.169.254` (los metadatos de las nubes)
+    o cualquier nombre que resuelva a una IP privada. Aquí se resuelve de
+    verdad y se comprueba la dirección resultante.
+
+    Hace consultas de red, así que hay que llamarlo desde un hilo: en el bucle
+    de eventos dejaría el servidor entero esperando.
+
+    Queda un resquicio teórico (DNS rebinding: el dominio podría resolver a una
+    IP pública ahora y a una privada cuando yt-dlp lo descargue). Cerrarlo del
+    todo exigiría fijar la IP en la descarga, que yt-dlp no permite.
+    """
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        raise HTTPException(400, "El enlace no es válido.")
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        raise HTTPException(400, f"No se pudo resolver el dominio: {host}")
+
+    for info in infos:
+        ip = info[4][0]
+        if _is_blocked_ip(ip):
+            log.warning("SSRF bloqueado: %s resuelve a %s", host, ip)
+            raise HTTPException(
+                400,
+                "Ese enlace apunta a una dirección de red interna y no está permitido.",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +537,10 @@ class ParseRequest(BaseModel):
 class DownloadRequest(BaseModel):
     url: str
     kind: str = Field("mp4", pattern="^(mp4|mp3)$")
-    format_id: str | None = None
+    # Identificador de formato que devuelve /api/parse. Se acota a lo que puede
+    # ser un identificador real: llega desde fuera y acaba dentro del selector
+    # de formatos de yt-dlp, donde los corchetes y las comas tienen significado.
+    format_id: str | None = Field(None, max_length=64, pattern=r"^[\w.:+-]{1,64}$")
     # Opcionales: el navegador ya los conoce del análisis y sirven para que el
     # carrusel de la portada y el historial tengan algo que enseñar aunque la
     # descarga falle. Se validan como dato no confiable.
@@ -325,6 +555,19 @@ class PrivateSourceRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+def _token_matches(token: str | None) -> bool:
+    """Compara el token en tiempo constante.
+
+    Con `!=` la comparación termina en el primer carácter que difiere, así que
+    el tiempo de respuesta revela cuántos caracteres iniciales se acertaron y
+    el token se puede adivinar carácter a carácter. `compare_digest` tarda lo
+    mismo acierte uno o ninguno.
+    """
+    if not token or not config.ADMIN_TOKEN:
+        return False
+    return hmac.compare_digest(token.encode("utf-8"), config.ADMIN_TOKEN.encode("utf-8"))
+
+
 def require_admin(token: str | None) -> None:
     """Protege los endpoints de administración."""
     if not config.ADMIN_TOKEN:
@@ -333,7 +576,7 @@ def require_admin(token: str | None) -> None:
             "Los endpoints de administración están deshabilitados. "
             "Define VDL_ADMIN_TOKEN para activarlos.",
         )
-    if token != config.ADMIN_TOKEN:
+    if not _token_matches(token):
         raise HTTPException(401, "Token de administración inválido.")
 
 
@@ -350,7 +593,7 @@ def require_admin_if_configured(token: str | None) -> bool:
     """
     if not config.ADMIN_TOKEN:
         return False
-    if token != config.ADMIN_TOKEN:
+    if not _token_matches(token):
         raise HTTPException(401, "Token de administración inválido.")
     return True
 
@@ -390,6 +633,13 @@ def health() -> dict:
         else 0,
         "circuits_open": circuits_open,
         "platforms_degraded": degraded,
+        "editor": {
+            "enabled": config.EDITOR_ENABLED,
+            "assets": editor.count_assets(),
+            "formats": [item["id"] for item in editor.output_formats()]
+            if config.EDITOR_ENABLED
+            else [],
+        },
         "proxy": {
             "general": bool(config.PROXY),
             "por_plataforma": sorted(config.PROXY_MAP.keys()),
@@ -488,7 +738,9 @@ def api_gallery(limit: int = 12) -> dict:
 
 
 @app.get("/api/preview/{job_id}", include_in_schema=False)
-def api_preview(job_id: str) -> FileResponse:
+def api_preview(job_id: str, request: Request) -> FileResponse:
+    rate_limit(request, scope="files", limit=config.RATE_LIMIT_FILES_REQUESTS)
+
     """Sirve el archivo en línea para el carrusel, no como descarga.
 
     `/api/file/{id}` manda `Content-Disposition: attachment`, que fuerza la
@@ -787,6 +1039,8 @@ def download_apk() -> FileResponse:
 async def api_parse(payload: ParseRequest, request: Request) -> dict:
     rate_limit(request)
     url = validate_url(payload.url)
+    # Fuera del bucle de eventos: resuelve DNS y puede tardar.
+    await asyncio.to_thread(assert_public_target, url)
 
     try:
         result = await asyncio.wait_for(
@@ -808,6 +1062,7 @@ async def api_parse(payload: ParseRequest, request: Request) -> dict:
 async def api_download(payload: DownloadRequest, request: Request) -> dict:
     rate_limit(request)
     url = validate_url(payload.url)
+    await asyncio.to_thread(assert_public_target, url)
 
     if payload.kind == "mp3" and not ffmpeg_status()["available"]:
         raise HTTPException(
@@ -846,7 +1101,11 @@ def api_job(job_id: str) -> dict:
 
 
 @app.get("/api/file/{job_id}")
-def api_file(job_id: str) -> FileResponse:
+def api_file(job_id: str, request: Request) -> FileResponse:
+    # Cupo propio y holgado: una reproducción con saltos genera muchas
+    # peticiones de rango, y no deben gastar el cupo de los análisis.
+    rate_limit(request, scope="files", limit=config.RATE_LIMIT_FILES_REQUESTS)
+
     job = store.get(job_id)
     if not job or not job.filepath:
         raise HTTPException(404, "Archivo no disponible.")
@@ -884,6 +1143,15 @@ async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
         content={"detail": exc.detail},
         headers=getattr(exc, "headers", None),
     )
+
+
+# ---------------------------------------------------------------------------
+# Editor de audio
+#
+# Va en su propio router y recibe el limitador de aquí: así el editor no
+# necesita importar nada de este archivo (ni este del interior del editor).
+# ---------------------------------------------------------------------------
+app.include_router(editor_api.build_router(rate_limit))
 
 
 # ---------------------------------------------------------------------------

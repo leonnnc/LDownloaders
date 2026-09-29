@@ -24,6 +24,18 @@ services:
       VDL_DATA_DIR: "/data"
       # El reinicio lo pide el actualizador y Docker lo levanta solo.
       VDL_RESTART_AFTER_UPDATE: "true"
+
+      # Caddy es el único que entra, así que sus cabeceras sí se creen, y solo
+      # las suyas. La red `web` tiene una subred fija (ver más abajo) para
+      # poder acotarlo aquí: la aplicación lee la ÚLTIMA IP de
+      # X-Forwarded-For, que es la que añade Caddy; las anteriores las podría
+      # haber puesto el cliente y no valen nada.
+      VDL_TRUSTED_PROXIES: "172.28.0.0/16"
+
+      # Tope de tamaño por archivo. Sin esto, un 4K largo (o unos cuantos a la
+      # vez) llena el disco del servidor y el servicio deja de aceptar nada.
+      # Súbelo si de verdad sirves vídeos muy grandes.
+      VDL_MAX_FILESIZE_MB: "2048"
     volumes:
       - downloads:/data
       # Cookies para contenido que exige sesión (opcional):
@@ -67,6 +79,12 @@ services:
 networks:
   web:
     driver: bridge
+    # Subred fija: VDL_TRUSTED_PROXIES necesita saber desde qué red llegan las
+    # peticiones de Caddy. Con una subred asignada al azar, ese valor cambiaría
+    # en cada despliegue y las cabeceras dejarían de creerse sin avisar.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   downloads:

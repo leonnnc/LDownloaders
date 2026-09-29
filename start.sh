@@ -16,4 +16,8 @@ fi
 
 echo "Servidor en http://127.0.0.1:8000"
 cd "$ROOT/backend"
-exec "$VENV/bin/python" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+# --no-proxy-headers: uvicorn lo trae activado por defecto y reescribe la IP del
+# cliente con X-Forwarded-For, que el cliente puede inventarse. Con esto la IP
+# es la del par real y el límite de peticiones no se puede saltar.
+exec "$VENV/bin/python" -m uvicorn app.main:app --reload \
+  --host 127.0.0.1 --port 8000 --no-proxy-headers

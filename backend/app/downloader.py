@@ -43,7 +43,29 @@ PERMANENT_ERROR_MARKERS = (
     "removed by the uploader",
     "does not exist",
     "is not a valid url",
+    "invalid url",
     "unable to extract",
+    # Identificador mal formado (por ejemplo, un ID de YouTube al que le falta
+    # un carácter). yt-dlp lo llama «truncated_id». Sin estos marcadores se
+    # reintentaba tres veces con esperas, gastando unos 7 segundos por enlace
+    # para acabar diciendo lo mismo.
+    "truncated",
+    "incomplete youtube id",
+    "looks truncated",
+    # Contenido que no se va a poder descargar nunca sin credenciales.
+    "private video",
+    "this video is private",
+    "sign in to confirm your age",
+    "age-restricted",
+    "age restricted",
+    "members-only",
+    "members only",
+    "premium",
+    "account has been terminated",
+    "video has been removed",
+    "been removed",
+    "no longer available",
+    "playback on other websites has been disabled",
 )
 
 # Rotación de cookies: reparte las peticiones entre varias sesiones.
@@ -177,6 +199,20 @@ def _is_permanent_error(exc: Exception) -> bool:
     return any(marker in message for marker in PERMANENT_ERROR_MARKERS)
 
 
+def _last_thumbnail(info: dict) -> str | None:
+    """Última miniatura del listado, si la hay.
+
+    `info.get("thumbnails", [{}])[-1]` no protegía de una lista VACÍA: el valor
+    por defecto solo se usa cuando la clave no existe, no cuando vale `[]`. En
+    ese caso `[-1]` lanzaba IndexError, y esa línea está fuera del try/except de
+    `parse`, así que el usuario recibía un 500 en vez de un error entendible.
+    """
+    thumbnails = info.get("thumbnails") or []
+    if not thumbnails:
+        return None
+    return thumbnails[-1].get("url")
+
+
 def _human_error(exc: Exception) -> str:
     """Traduce los errores más comunes de yt-dlp a algo entendible."""
     raw = str(exc)
@@ -263,6 +299,14 @@ def parse(url: str, skip_retry: bool = False) -> dict:
         metrics.inc("parse.fail")
         raise EngineError(_human_error(exc)) from exc
 
+    # Algunos extractores devuelven None en lugar de lanzar un error. Sin esta
+    # comprobación, la línea siguiente falla con AttributeError fuera del
+    # try/except y el cliente recibe un 500 en vez de un mensaje entendible.
+    if not info:
+        metrics.record(platform, False, "sin datos")
+        metrics.inc("parse.fail")
+        raise EngineError("El sitio no devolvió información del video.")
+
     metrics.record(platform, True)
     metrics.inc("parse.ok")
 
@@ -338,7 +382,7 @@ def parse(url: str, skip_retry: bool = False) -> dict:
 
     return {
         "title": info.get("title"),
-        "thumbnail": info.get("thumbnail") or info.get("thumbnails", [{}])[-1].get("url"),
+        "thumbnail": info.get("thumbnail") or _last_thumbnail(info),
         "duration": info.get("duration"),
         "uploader": info.get("uploader") or info.get("channel"),
         "extractor": info.get("extractor_key") or info.get("extractor"),

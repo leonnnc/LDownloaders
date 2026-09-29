@@ -18,6 +18,13 @@
       <span class="brand-mark">⬇</span>
       <span class="brand-name">Downloader</span>
     </div>
+
+    <!-- Acceso visible al editor de audio, en la esquina derecha de la barra.
+         El panel de control sigue siendo invisible (cinco toques, mantener
+         pulsado o Ctrl + Alt + E); el editor ya no hace falta esconderlo. -->
+    <div class="topbar-right">
+      <a class="badge badge-link topbar-cta" href="/editor">Editor de audio</a>
+    </div>
   </header>
 
   <main class="wrap">
@@ -155,6 +162,7 @@
       <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
       <p class="muted small" id="progress-file"></p>
       <a class="btn btn-success hidden" id="download-link" download>Guardar archivo</a>
+      <a class="btn hidden" id="edit-link" href="/editor">Editar el audio</a>
     </section>
 
     <!-- Video privado de Facebook -->
@@ -194,6 +202,20 @@
       </p>
     </footer>
   </main>
+
+  <!-- Menú invisible. En la página no hay ninguna pista de que exista: se abre
+       manteniendo pulsado el logotipo «Downloader» —el mismo sitio donde ya vive
+       el acceso del panel, con un gesto distinto— o con Ctrl + Alt + E.
+       Lo único que se ve al abrirlo es su contenido: la entrada «Editor de Audio». -->
+  <div class="secret-menu hidden" id="secret-menu" role="dialog" aria-modal="true"
+       aria-label="Menú del sistema">
+    <button class="secret-menu-backdrop" type="button" id="secret-menu-backdrop"
+            tabindex="-1" aria-label="Cerrar el menú"></button>
+    <nav class="secret-menu-panel">
+      <a class="secret-menu-item" href="/editor">Editor de Audio</a>
+      <a class="secret-menu-item" href="/monitor">Panel de control</a>
+    </nav>
+  </div>
 
   <script src="/app.js"></script>
 </body>
