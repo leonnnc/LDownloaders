@@ -276,8 +276,9 @@ Cómo se usa:
 3. **Escúchalo** — controles de reproducción completos: reproducir y pausar,
    ir al inicio y al final, repetir el montaje sin parar, velocidad de 0,75× a 2×
    y una barra de posición arrastrable. Al lado está **✂ Cortar**, que saca del
-   montaje la parte elegida y corre hacia atrás lo que venía después, así que no
-   queda un hueco de silencio. El volumen
+   montaje la parte elegida y corre hacia atrás lo que venía después, sin hueco de
+   silencio: los dos lados quedan pegados y se ven como una sola sección de música,
+   así que cortar no va troceando la línea de tiempo. El volumen
    y los fundidos se aplican en vivo, así que lo que oyes es lo que va a salir.
    Con el teclado: <kbd>Espacio</kbd>, <kbd>←</kbd>/<kbd>→</kbd> (un segundo, o
    diez con <kbd>Mayús</kbd>), <kbd>Inicio</kbd> y <kbd>Fin</kbd>, <kbd>Supr</kbd>
@@ -290,6 +291,11 @@ Decisiones que conviene conocer:
   nada: mover un tirador o cambiar un volumen no gasta red ni CPU del servidor.
 * **El corte busca dentro del archivo** (`-ss` en la entrada y `-t` para el tramo),
   así que recortar el minuto 50 no obliga a decodificar los 49 anteriores.
+* **Cortar no trocea la línea de tiempo, aunque por dentro sí la trocee**: entre los
+  dos tramos está justo lo que se quitó, así que unirlos en uno solo devolvería el
+  audio borrado. Lo que se hace es dibujar el segundo pegado al primero y sin
+  cabecera propia, de modo que la sección se ve entera. Si los dos lados acaban con
+  volúmenes distintos, se dibujan separados: ahí la junta sí significa algo.
 * **El comando de FFmpeg se arma como lista de argumentos**, nunca como cadena de
   shell: los números del montaje llegan desde el navegador.
 * **El tipo de archivo se decide por sus primeros bytes**, no por la extensión ni

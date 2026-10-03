@@ -187,6 +187,23 @@
   display: flex;
   flex-direction: column;
 }
+/* Después de cortar quedan dos tramos —entre ellos está justo lo que se quitó—,
+   pero no se dibujan como dos: el que continúa al de al lado se pega a él, sin
+   borde ni esquina por la junta, y su cabecera queda vacía. El alto se fija aquí
+   para que el hueco mida lo mismo que una cabecera con su nombre y su ✕ (4+4 de
+   relleno, 16 del botón y 1 del borde de abajo): así la onda no se desplaza. */
+.tl-clip-cont {
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.tl-clip-prev-cont {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.tl-clip-head { min-height: 25px; }
+
 .tl-clip.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);

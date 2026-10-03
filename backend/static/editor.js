@@ -627,7 +627,10 @@
 
   function removeClip(clipId) {
     commit(() => {
+      const index = state.clips.findIndex((clip) => clip.id === clipId);
       state.clips = state.clips.filter((clip) => clip.id !== clipId);
+      // Quitar un tramo tampoco tiene por qué dejar dos bloques donde había uno.
+      if (index !== -1) joinAround(index);
       if (state.selectedId === clipId) state.selectedId = null;
     });
     keepSelectionValid();
@@ -721,12 +724,37 @@
     commit(() => {
       const pieces = selectionPieces(range);
       const gone = new Set(pieces.map((clip) => clip.id));
+      // Dónde queda el hueco: los trozos de dentro van seguidos, así que el primero
+      // marca el sitio exacto donde van a quedar pegados los dos lados.
+      const hole = state.clips.findIndex((clip) => gone.has(clip.id));
       state.clips = state.clips.filter((clip) => !gone.has(clip.id));
+      joinAround(hole);
       state.selectedId = null;
     });
 
     keepSelectionValid();
     seek(at);
+  }
+
+  /* Los dos lados del corte eran un solo tramo antes de cortar, así que se vuelven a
+     unir: si no, cada corte dejaría un bloque de más y la línea de tiempo acabaría
+     llena de trozos. Solo se pegan cuando unirlos no cambia lo que suena: el mismo
+     audio, contiguos dentro del archivo, el mismo volumen y sin fundidos en la junta
+     (que es justo como los deja el corte). */
+  function joinAround(index) {
+    const before = state.clips[index - 1];
+    const after = state.clips[index];
+    if (!before || !after) return;
+    if (before.assetId !== after.assetId) return;
+    if (before.gainDb !== after.gainDb) return;
+    if (before.fadeOut !== 0 || after.fadeIn !== 0) return;
+    if (Math.abs(after.start - before.end) > MIN_SEL) return;
+
+    // El de delante se queda con todo: el fundido de entrada era suyo, y el de
+    // salida pasa a ser el que traía el trozo de detrás.
+    before.end = after.end;
+    before.fadeOut = after.fadeOut;
+    state.clips.splice(index, 1);
   }
 
   // El botón de cortar solo se puede pulsar cuando hay una parte elegida: sin
@@ -763,6 +791,19 @@
     el.btnEmptyAdd.textContent = asset ? "Traerlo a la línea" : "Ir a cargar un audio";
   }
 
+  /* ¿Estos dos tramos seguidos son el mismo trozo de música partido en dos? Lo son
+     cuando salen del mismo audio, llevan el mismo volumen y no hay fundido en la
+     junta: justo como queda un tramo después de cortarle una parte del medio. En ese
+     caso el segundo se dibuja como continuación del primero, pegado y sin cabecera
+     propia, para que el corte no parezca trocear la línea de tiempo. Unirlos por
+     dentro no se puede: entre los dos está la parte que se quitó. */
+  function sameRun(before, after) {
+    return before.assetId === after.assetId
+      && before.gainDb === after.gainDb
+      && before.fadeOut === 0
+      && after.fadeIn === 0;
+  }
+
   function renderTimeline() {
     const empty = state.clips.length === 0;
     if (empty) {
@@ -779,13 +820,19 @@
     el.tlClips.style.width = `${Math.max(1, length * scale)}px`;
     renderRuler(length, scale);
 
-    state.clips.forEach((clip) => {
+    state.clips.forEach((clip, index) => {
       const asset = assetOf(clip.assetId);
       const width = Math.max(14, clipDuration(clip) * scale);
+      // El que continúa a otro se pega a él; el que abre la sección, además, suelta
+      // su borde derecho para que entre los dos no se vea ninguna raya.
+      const following = index > 0 && sameRun(state.clips[index - 1], clip);
+      const followed = index < state.clips.length - 1 && sameRun(clip, state.clips[index + 1]);
 
       const block = document.createElement("article");
       block.className = "tl-clip";
       block.dataset.id = clip.id;
+      if (following) block.classList.add("tl-clip-cont");
+      if (followed) block.classList.add("tl-clip-prev-cont");
       if (clip.id === state.selectedId) block.classList.add("selected");
       if (clip.gainDb <= -60) block.classList.add("muted");
       block.style.width = `${width}px`;
@@ -793,22 +840,29 @@
 
       const head = document.createElement("div");
       head.className = "tl-clip-head";
-      // La cabecera es la que se arrastra para reordenar: la onda queda libre para
-      // elegir una parte con el ratón, que es lo que se hace mucho más a menudo.
-      head.draggable = true;
-      const name = document.createElement("span");
-      name.className = "tl-clip-name";
-      name.textContent = asset ? asset.name : "audio";
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "tl-clip-x";
-      remove.textContent = "✕";
-      remove.setAttribute("aria-label", "Quitar este tramo");
-      remove.addEventListener("click", (event) => {
-        event.stopPropagation();
-        removeClip(clip.id);
-      });
-      head.append(name, remove);
+      if (following) {
+        // Una continuación no repite el nombre ni lleva ✕: el nombre y el quitar son
+        // los del tramo que abre la sección. La cabecera se deja vacía, pero se deja:
+        // su alto es el que mantiene la onda en su sitio.
+        head.setAttribute("aria-hidden", "true");
+      } else {
+        // La cabecera es la que se arrastra para reordenar: la onda queda libre para
+        // elegir una parte con el ratón, que es lo que se hace mucho más a menudo.
+        head.draggable = true;
+        const name = document.createElement("span");
+        name.className = "tl-clip-name";
+        name.textContent = asset ? asset.name : "audio";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "tl-clip-x";
+        remove.textContent = "✕";
+        remove.setAttribute("aria-label", "Quitar este tramo");
+        remove.addEventListener("click", (event) => {
+          event.stopPropagation();
+          removeClip(clip.id);
+        });
+        head.append(name, remove);
+      }
 
       const canvas = document.createElement("canvas");
       canvas.className = "tl-clip-wave";
@@ -829,11 +883,15 @@
 
       const foot = document.createElement("div");
       foot.className = "tl-clip-foot";
-      for (const badge of clipBadges(clip)) {
-        const span = document.createElement("span");
-        span.className = `tl-badge${badge.css ? ` ${badge.css}` : ""}`;
-        span.textContent = badge.text;
-        foot.appendChild(span);
+      // En una continuación no se repiten las etiquetas: son las mismas que las del
+      // tramo que abre la sección, y repetirlas marcaría justo la junta.
+      if (!following) {
+        for (const badge of clipBadges(clip)) {
+          const span = document.createElement("span");
+          span.className = `tl-badge${badge.css ? ` ${badge.css}` : ""}`;
+          span.textContent = badge.text;
+          foot.appendChild(span);
+        }
       }
       block.appendChild(foot);
 
@@ -966,8 +1024,14 @@
     el.btnPlay.textContent = state.playing ? "❚❚" : "▶";
     el.btnPlay.setAttribute("aria-label", state.playing ? "Pausar" : "Reproducir");
     const count = state.clips.length;
+    // Se cuentan las secciones que se ven, no los trozos de dentro: después de cortar
+    // hay varias piezas dibujadas como una sola, y anunciar «3 tramos» cuando en la
+    // línea de tiempo se ve uno solo confunde.
+    const sections = state.clips.filter(
+      (clip, index) => index === 0 || !sameRun(state.clips[index - 1], clip)
+    ).length;
     el.exportNote.textContent = count
-      ? `${count} tramo${count > 1 ? "s" : ""} · ${fmtTime(total())} de salida`
+      ? `${sections} tramo${sections > 1 ? "s" : ""} · ${fmtTime(total())} de salida`
       : "Añade algún tramo para poder exportar.";
     el.btnExport.disabled = count === 0;
 
