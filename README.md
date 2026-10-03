@@ -263,7 +263,9 @@ Cómo se usa:
    sobre la propia línea. **Arrastrando sobre la onda** se elige una parte —o el tramo
    entero con un doble clic— y aparece encima una cajita de volumen que se sube o se
    baja arrastrándola hacia arriba o hacia abajo; por dentro eso parte el montaje por
-   los bordes de lo elegido, así que lo que se oye y se ve es lo que va a salir. La línea de tiempo
+   los bordes de lo elegido, así que lo que se oye y se ve es lo que va a salir. Arrastrando
+   sobre la regla con <kbd>Mayús</kbd> se elige la parte ahí arriba, y sus bordes se pegan a la
+   guía roja si pasan cerca. La línea de tiempo
    tiene **zoom**: de serie el montaje entero cabe en la pantalla, y al ampliar se
    recorta con precisión sin perder de vista el punto que estás mirando. Se maneja
    con el ratón: la **rueda** sobre la línea acerca y aleja en el punto señalado,
@@ -272,12 +274,14 @@ Cómo se usa:
    directamente con el ratón. Con el teclado: <kbd>+</kbd> y <kbd>−</kbd> acercan y
    alejan, y <kbd>0</kbd> vuelve a ver el montaje entero.
 3. **Escúchalo** — controles de reproducción completos: reproducir y pausar,
-   ir al inicio y al final, saltos de ±5 y ±10 segundos, repetir el montaje sin
-   parar, velocidad de 0,75× a 2× y una barra de posición arrastrable. El volumen
+   ir al inicio y al final, repetir el montaje sin parar, velocidad de 0,75× a 2×
+   y una barra de posición arrastrable. Al lado está **✂ Cortar**, que saca del
+   montaje la parte elegida y corre hacia atrás lo que venía después, así que no
+   queda un hueco de silencio. El volumen
    y los fundidos se aplican en vivo, así que lo que oyes es lo que va a salir.
    Con el teclado: <kbd>Espacio</kbd>, <kbd>←</kbd>/<kbd>→</kbd> (un segundo, o
    diez con <kbd>Mayús</kbd>), <kbd>Inicio</kbd> y <kbd>Fin</kbd>, <kbd>Supr</kbd>
-   y <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
+   (que corta la parte elegida) y <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
 4. **Expórtalo** — el servidor arma el montaje con FFmpeg y entrega el archivo.
 
 Decisiones que conviene conocer:

@@ -44,10 +44,7 @@
     btnPlay: $("btn-play"),
     btnStart: $("btn-start"),
     btnEnd: $("btn-end"),
-    btnBack5: $("btn-back5"),
-    btnBack10: $("btn-back10"),
-    btnFwd5: $("btn-fwd5"),
-    btnFwd10: $("btn-fwd10"),
+    btnCut: $("btn-cut"),
     btnLoop: $("btn-loop"),
     speed: $("speed"),
     scrub: $("scrub"),
@@ -703,6 +700,42 @@
     return null;
   }
 
+  /* ---------------- cortar la parte elegida ----------------
+     Es lo contrario de añadir: lo sombreado desaparece del montaje y los tramos de
+     detrás se corren hacia atrás, así que no queda un hueco de silencio. Se apoya en
+     lo mismo que el volumen de la parte elegida —partir el montaje justo por sus
+     bordes y quedarse con los trozos de dentro—, solo que esos trozos se van. */
+
+  function cutSelection() {
+    const range = state.selection;
+    if (!range || !state.clips.length) return;
+    if (range.end - range.start < MIN_SEL) return;
+
+    // El cursor se queda donde empezaba el corte: es el punto que se está mirando.
+    const at = Math.max(0, Math.min(range.start, total()));
+
+    // La selección se suelta antes de repintar: eso ya no está en el montaje, y
+    // dejar el sombreado un instante daría a entender lo contrario.
+    state.selection = null;
+
+    commit(() => {
+      const pieces = selectionPieces(range);
+      const gone = new Set(pieces.map((clip) => clip.id));
+      state.clips = state.clips.filter((clip) => !gone.has(clip.id));
+      state.selectedId = null;
+    });
+
+    keepSelectionValid();
+    seek(at);
+  }
+
+  // El botón de cortar solo se puede pulsar cuando hay una parte elegida: sin
+  // selección no hay nada que cortar, y dejarlo activo daría a entender que sí.
+  function updateCutButton() {
+    const range = state.selection;
+    el.btnCut.disabled = !range || range.end - range.start < MIN_SEL || !state.clips.length;
+  }
+
   function refresh() {
     renderTimeline();
     updateTransport();
@@ -940,12 +973,10 @@
 
     // Controles de reproducción: sin montaje no hay nada que mover.
     const empty = count === 0;
-    for (const button of [
-      el.btnPlay, el.btnStart, el.btnEnd,
-      el.btnBack5, el.btnBack10, el.btnFwd5, el.btnFwd10,
-    ]) {
+    for (const button of [el.btnPlay, el.btnStart, el.btnEnd]) {
       button.disabled = empty;
     }
+    updateCutButton();
     el.btnLoop.disabled = empty;
     el.speed.disabled = empty;
     el.scrub.disabled = empty;
@@ -959,7 +990,7 @@
     el.btnLoop.setAttribute("aria-pressed", state.loop ? "true" : "false");
   }
 
-  // Moverse por el montaje: es lo que hacen los botones de ±5 y ±10 segundos.
+  // Moverse por el montaje: lo hacen las flechas ← y → (con Mayús, diez segundos).
   function nudge(delta) {
     if (!state.clips.length) return;
     seek(state.cursor + delta);
@@ -1072,6 +1103,7 @@
     if (!range || !length || range.end - range.start < 0.001) {
       el.tlSelect.classList.add("hidden");
       el.tlGain.classList.add("hidden");
+      updateCutButton();
       return;
     }
 
@@ -1092,6 +1124,7 @@
     const max = el.tlScroll.scrollLeft + Math.max(view, half * 2) - half;
     el.tlGain.style.transform = `translateX(${Math.max(min, Math.min(center, max)) - half}px)`;
     el.tlGain.classList.remove("hidden");
+    updateCutButton();
   }
 
   /* ---------------- escucha ----------------
@@ -1421,10 +1454,7 @@
   el.btnPlay.addEventListener("click", togglePlay);
   el.btnStart.addEventListener("click", () => seek(0));
   el.btnEnd.addEventListener("click", () => seek(total()));
-  el.btnBack5.addEventListener("click", () => nudge(-5));
-  el.btnBack10.addEventListener("click", () => nudge(-10));
-  el.btnFwd5.addEventListener("click", () => nudge(5));
-  el.btnFwd10.addEventListener("click", () => nudge(10));
+  el.btnCut.addEventListener("click", cutSelection);
   el.btnLoop.addEventListener("click", toggleLoop);
   el.speed.addEventListener("change", () => setRate(Number(el.speed.value) || 1));
 
@@ -1482,6 +1512,8 @@
   el.outFormat.addEventListener("change", syncFormatFields);
 
   el.tlRuler.addEventListener("click", (event) => {
+    // Con Mayús la regla sirve para elegir la parte, no para mover el cursor.
+    if (event.shiftKey) return;
     seek(timeAtClientX(event.clientX));
   });
 
@@ -1492,9 +1524,41 @@
     }
   });
 
-  // El cursor también se puede arrastrar sobre la regla.
+  // El cursor también se puede arrastrar sobre la regla. Con Mayús, en cambio, la
+  // regla elige la parte desde donde se pulsa hasta donde se suelta: es la forma de
+  // marcar el corte ahí arriba, sobre la propia guía.
   el.tlRuler.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
     el.tlRuler.setPointerCapture(event.pointerId);
+
+    if (event.shiftKey && state.clips.length) {
+      const anchor = snapToGuide(timeAtClientX(event.clientX));
+      const originX = event.clientX;
+      const extend = (ev) => {
+        if (Math.abs(ev.clientX - originX) < 3) return;
+        const time = snapToGuide(timeAtClientX(ev.clientX));
+        state.selection = {
+          start: Math.max(0, Math.min(anchor, time)),
+          end: Math.min(total(), Math.max(anchor, time)),
+        };
+        renderSelection();
+      };
+      const end = () => {
+        el.tlRuler.removeEventListener("pointermove", extend);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+        // Un roce sin arrastre no deja selección: se queda como estaba.
+        if (state.selection && state.selection.end - state.selection.start < MIN_SEL) {
+          state.selection = null;
+        }
+        renderTimeline();
+      };
+      el.tlRuler.addEventListener("pointermove", extend);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+      return;
+    }
+
     // El tiempo se recalcula en cada movimiento en vez de congelar el rectángulo:
     // con el zoom puesto la vista se desplaza sola y el punto bajo el dedo cambia.
     const move = (ev) => seek(timeAtClientX(ev.clientX));
@@ -1560,11 +1624,24 @@
      Arrastrar sobre la onda elige un trozo de música; un clic suelto sigue eligiendo
      el tramo (y su cabecera sigue siendo lo que se arrastra para reordenar). */
 
+  // Margen de enganche con la guía roja: unos pocos píxeles, para clavar el corte
+  // donde está la guía sin renunciar a arrastrar a pulso.
+  const SNAP_PX = 8;
+
+  // El borde se pega a la guía roja si cae cerca. Colocar la guía es la forma de
+  // fijar un instante exacto, y el arrastre no tiene esa puntería: sin esto habría
+  // que acertar el píxel justo.
+  function snapToGuide(time) {
+    if (!state.clips.length) return time;
+    const guide = state.cursor;
+    return Math.abs(time - guide) * pixelsPerSecond() <= SNAP_PX ? guide : time;
+  }
+
   el.tlClips.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || !state.clips.length) return;
     if (event.target.closest(".tl-clip-head") || event.target.closest(".tl-clip-handle")) return;
 
-    const anchor = timeAtClientX(event.clientX);
+    const anchor = snapToGuide(timeAtClientX(event.clientX));
     const originX = event.clientX;
     let dragged = false;
     capturePointer(el.tlClips, event.pointerId);
@@ -1572,7 +1649,7 @@
     const move = (ev) => {
       if (!dragged && Math.abs(ev.clientX - originX) < 3) return;
       dragged = true;
-      const time = timeAtClientX(ev.clientX);
+      const time = snapToGuide(timeAtClientX(ev.clientX));
       state.selection = {
         start: Math.max(0, Math.min(anchor, time)),
         end: Math.min(total(), Math.max(anchor, time)),
@@ -1758,7 +1835,12 @@
       event.preventDefault();
       togglePlay();
     } else if (event.key === "Delete" || event.key === "Backspace") {
-      if (state.selectedId) {
+      // Con una parte elegida, Supr la corta; si no hay parte, se lleva el tramo
+      // seleccionado entero, que es lo que hacía antes.
+      if (state.selection && state.selection.end - state.selection.start >= MIN_SEL) {
+        event.preventDefault();
+        cutSelection();
+      } else if (state.selectedId) {
         event.preventDefault();
         removeClip(state.selectedId);
       }

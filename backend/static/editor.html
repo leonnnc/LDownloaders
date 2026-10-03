@@ -82,20 +82,15 @@
         <span class="mono" id="tl-time">0:00 / 0:00</span>
       </div>
 
-      <!-- Controles de reproducción. Cada botón tiene su atajo de teclado. -->
+      <!-- Controles de reproducción y el corte. Cada botón tiene su atajo de teclado. -->
       <div class="transport" role="group" aria-label="Controles de reproducción">
         <button class="nav-btn" type="button" id="btn-start"
                 title="Ir al inicio (Inicio)" aria-label="Ir al inicio">Inicio</button>
-        <button class="nav-btn" type="button" id="btn-back10"
-                title="Retroceder 10 s (Mayús + ←)" aria-label="Retroceder diez segundos">−10</button>
-        <button class="nav-btn" type="button" id="btn-back5"
-                title="Retroceder 5 s" aria-label="Retroceder cinco segundos">−5</button>
         <button class="nav-btn nav-btn-play" type="button" id="btn-play"
                 title="Reproducir o pausar (Espacio)" aria-label="Reproducir">▶</button>
-        <button class="nav-btn" type="button" id="btn-fwd5"
-                title="Avanzar 5 s" aria-label="Avanzar cinco segundos">+5</button>
-        <button class="nav-btn" type="button" id="btn-fwd10"
-                title="Avanzar 10 s (Mayús + →)" aria-label="Avanzar diez segundos">+10</button>
+        <button class="nav-btn nav-btn-cut" type="button" id="btn-cut" disabled
+                title="Cortar la parte elegida (Supr)"
+                aria-label="Cortar la parte elegida">✂ Cortar</button>
         <button class="nav-btn" type="button" id="btn-end"
                 title="Ir al final (Fin)" aria-label="Ir al final">Fin</button>
         <button class="nav-btn" type="button" id="btn-loop"
@@ -140,12 +135,16 @@
         <strong>Arrastra sobre la onda</strong> para elegir una parte de la música: queda sombreada
         y con la cajita de volumen encima, que se sube o se baja arrastrándola hacia arriba o hacia
         abajo (con <kbd>Mayús</kbd>, más fina; la rueda sobre ella también sirve). Un doble clic
-        elige el tramo entero y <kbd>Esc</kbd> quita la selección.
+        elige el tramo entero y <kbd>Esc</kbd> quita la selección. Con una parte ya
+        elegida, <strong>✂ Cortar</strong> la saca del montaje y los tramos de detrás se corren
+        hacia atrás para que no quede hueco; <kbd>Supr</kbd> hace lo mismo. Arrastrando sobre la
+        regla con <kbd>Mayús</kbd> se elige la parte ahí arriba, y sus bordes se pegan a la guía
+        roja cuando pasan cerca, que es la forma de clavar el corte en el instante exacto.
         Un clic suelto elige el tramo (la ✕ lo quita), sus bordes se arrastran para recortarlo y su
         cabecera se arrastra para cambiar el orden.
         <kbd>Espacio</kbd> reproduce o pausa, <kbd>←</kbd> <kbd>→</kbd> mueven un segundo
         (<kbd>Mayús</kbd> los hace diez), <kbd>Inicio</kbd> y <kbd>Fin</kbd> van a los extremos,
-        <kbd>Supr</kbd> borra el tramo elegido y <kbd>Ctrl</kbd>+<kbd>Z</kbd> deshace.
+        <kbd>Supr</kbd> corta la parte elegida y <kbd>Ctrl</kbd>+<kbd>Z</kbd> deshace.
         La <strong>rueda</strong> sobre la línea de tiempo acerca y aleja en el punto que señalas,
         y <kbd>Mayús</kbd>+rueda (o el botón central, arrastrando) desplaza la vista.
       </p>

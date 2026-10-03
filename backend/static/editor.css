@@ -424,6 +424,16 @@
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+/* El botón de cortar: la acción de edición del montaje, al lado del de reproducir.
+   Se queda apagado mientras no haya una parte elegida. */
+.transport .nav-btn-cut {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.transport .nav-btn-cut:hover:not(:disabled) { background: var(--accent-soft); }
+.transport .nav-btn-cut:disabled { border-color: var(--border); color: var(--text-3); }
+
 .speed-field {
   display: flex;
   align-items: center;

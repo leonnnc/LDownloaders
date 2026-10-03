@@ -86,4 +86,4 @@ diagnostico-menu/
 *.bak
 
 # Capturas de trabajo: sirven para revisar un cambio, no para el repositorio.
-captura-*.png
+/*.png
