@@ -264,6 +264,18 @@ El repositorio trae `.devcontainer/`, así que al abrir el Codespace se hace tod
    cuenta de GitHub. En público, cualquiera con el enlace puede usar el servicio.
 5. Se para solo tras un rato inactivo. **Se reinicia desde la pestaña Codespaces**, no
    desde la URL: la dirección cambia cada vez que creas un Codespace nuevo.
+6. Si la URL no abre, mira primero si el servidor está en marcha. En la terminal del
+   Codespace:
+
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/api/health
+   ```
+
+   Un `200` significa que el servicio está bien y el problema es el reenvío del puerto
+   (pestaña **PORTS**, que el 8000 esté y con la visibilidad que quieras). Si no
+   contesta, lánzalo a mano con `bash .devcontainer/start.sh` y mira lo que va saliendo:
+   el registro se guarda además en `servidor.log`. Lo que más tarda es la primera
+   instalación de dependencias.
 
 ### Límites que conviene saber
 
