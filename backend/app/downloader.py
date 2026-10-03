@@ -199,6 +199,44 @@ def _is_permanent_error(exc: Exception) -> bool:
     return any(marker in message for marker in PERMANENT_ERROR_MARKERS)
 
 
+def _record_failure(
+    platform: str,
+    exc: Exception | None,
+    message: str,
+    operation: str,
+) -> bool:
+    """Apunta el fallo donde corresponde: la plataforma o el enlace del usuario.
+
+    Un enlace que no existe, un video privado o uno borrado no dicen nada del
+    sitio. Antes se anotaban como fallo de la plataforma, y cinco enlaces malos
+    bastaban para que el panel anunciara «Sistema caído» y aconsejara
+    reiniciar un servicio que estaba perfecto (y para disparar una alerta al
+    webhook que no correspondía a ninguna avería).
+
+    Por eso hay dos contadores y no uno:
+
+    * `{operation}.invalid` — el enlace que trajo el usuario. Se informa, pero
+      no entra en la tasa de éxito ni en la ventana de la plataforma: si
+      entrara, la tasa global bajaría igual y el diagnóstico volvería a
+      anunciar una avería inexistente.
+    * `{operation}.fail` — el fallo es del motor o del sitio, y sí cuenta.
+
+    Ante la duda se cuenta como fallo de la plataforma: solo se exculpa lo que
+    se reconoce como permanente, con el mismo criterio que la lista de errores
+    que no se reintentan. Así no se tapa una avería real.
+
+    Devuelve True si el fallo cuenta contra la plataforma.
+    """
+    if exc is not None and _is_permanent_error(exc):
+        metrics.record_user_error(platform, message)
+        metrics.inc(f"{operation}.invalid")
+        return False
+
+    metrics.record(platform, False, message)
+    metrics.inc(f"{operation}.fail")
+    return True
+
+
 def _last_thumbnail(info: dict) -> str | None:
     """Última miniatura del listado, si la hay.
 
@@ -255,6 +293,31 @@ def _human_error(exc: Exception) -> str:
     return raw[:300] if raw else "Error desconocido al procesar el enlace."
 
 
+def _size_of(fmt: dict, duration: float) -> tuple:
+    """Peso de una pista: el que declara el motor, o uno estimado.
+
+    Muchos sitios no publican el tamaño por adelantado (Facebook, Instagram,
+    TikTok), y el usuario elige a ciegas. Cuando no lo declaran se estima con
+    el bitrate y la duración. El segundo valor avisa de si es un dato exacto o
+    aproximado, para que la interfaz pueda enseñarlo como aproximado en lugar
+    de hacer pasar una cuenta por una cifra oficial.
+    """
+    exact = fmt.get("filesize")
+    if exact:
+        return int(exact), False
+
+    approx = fmt.get("filesize_approx")
+    if approx:
+        return int(approx), True
+
+    # tbr es el bitrate total de la pista; sirve igual para vídeo y para audio.
+    rate = fmt.get("tbr") or fmt.get("vbr") or fmt.get("abr")
+    if rate and duration:
+        return int(float(rate) * 1000 / 8 * duration), True
+
+    return None, False
+
+
 # ---------------------------------------------------------------------------
 # Paso 2 del diseño: resolver el link
 # ---------------------------------------------------------------------------
@@ -291,12 +354,10 @@ def parse(url: str, skip_retry: bool = False) -> dict:
         metrics.inc("circuit.blocked")
         raise EngineError(str(exc)) from exc
     except EngineError as exc:
-        metrics.record(platform, False, str(exc))
-        metrics.inc("parse.fail")
+        _record_failure(platform, exc, str(exc), "parse")
         raise
     except Exception as exc:  # noqa: BLE001
-        metrics.record(platform, False, str(exc))
-        metrics.inc("parse.fail")
+        _record_failure(platform, exc, str(exc), "parse")
         raise EngineError(_human_error(exc)) from exc
 
     # Algunos extractores devuelven None en lugar de lanzar un error. Sin esta
@@ -320,6 +381,9 @@ def parse(url: str, skip_retry: bool = False) -> dict:
     video_formats: List[dict] = []
     audio_formats: List[dict] = []
 
+    # La duración hace falta para estimar los pesos que el sitio no declara.
+    duration = info.get("duration") or 0
+
     for f in info.get("formats") or []:
         ext = f.get("ext")
         if not ext:
@@ -329,13 +393,18 @@ def parse(url: str, skip_retry: bool = False) -> dict:
         has_video = vcodec != "none"
         has_audio = acodec != "none"
 
+        size, size_estimated = _size_of(f, duration)
+
         entry = {
             "format_id": f.get("format_id"),
             "ext": ext,
             "height": f.get("height"),
             "width": f.get("width"),
             "fps": f.get("fps"),
-            "filesize": f.get("filesize") or f.get("filesize_approx"),
+            "filesize": size,
+            # Si el peso es una cuenta y no un dato del sitio, la interfaz lo
+            # enseña como aproximado en vez de como cifra exacta.
+            "estimated": size_estimated,
             "abr": f.get("abr"),
             "vcodec": vcodec,
             "acodec": acodec,
@@ -357,6 +426,23 @@ def parse(url: str, skip_retry: bool = False) -> dict:
             abr = f.get("abr")
             entry["label"] = f"{int(abr)} kbps · {ext.upper()}" if abr else ext.upper()
             audio_formats.append(entry)
+
+    # El archivo que recibe el usuario no es la pista suelta: al elegir una
+    # calidad, el motor une ese vídeo con la mejor pista de audio
+    # (`formato+bestaudio`). Si la ficha enseñara solo el peso del vídeo, el
+    # archivo real saldría bastante más grande de lo prometido, y eso pasa
+    # justo en las calidades altas de YouTube, que vienen sin audio.
+    audio_size = max((a.get("filesize") or 0 for a in audio_formats), default=0)
+    audio_estimated = any(
+        a.get("estimated") for a in audio_formats if (a.get("filesize") or 0) == audio_size
+    )
+    for f in video_formats:
+        # La suma solo se hace cuando el peso del vídeo se conoce: sumarle audio
+        # a un vídeo de tamaño desconocido daría una cifra que no es ni el
+        # vídeo ni el archivo final.
+        if f.get("muted") and f.get("filesize") and audio_size:
+            f["filesize"] = f["filesize"] + audio_size
+            f["estimated"] = bool(f.get("estimated") or audio_estimated)
 
     # Orden: mejor calidad primero, y prefiere lo que ya trae audio (no requiere merge).
     video_formats.sort(
@@ -546,8 +632,7 @@ def run_job(job: Job) -> None:
         return
 
     # Todas las estrategias fallaron.
-    metrics.record(platform, False, str(last_error))
-    metrics.inc("download.fail")
+    _record_failure(platform, last_error, str(last_error), "download")
 
     if isinstance(last_error, CircuitOpenError):
         message = str(last_error)

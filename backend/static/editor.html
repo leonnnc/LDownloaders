@@ -123,64 +123,42 @@
                aria-label="Cursor de la línea de tiempo" aria-valuemin="0" aria-valuenow="0"></div>
           <div class="tl-clips" id="tl-clips"></div>
           <div class="tl-playhead" id="tl-playhead" aria-hidden="true"></div>
+          <div class="tl-select hidden" id="tl-select" aria-hidden="true"></div>
+          <div class="tl-grab hidden" id="tl-grab" role="separator" aria-label="Mover el cursor"
+               title="Arrastra para mover el cursor"></div>
+          <!-- El volumen de la parte elegida: se arrastra hacia arriba o hacia abajo. -->
+          <div class="tl-gain hidden" id="tl-gain" role="slider" tabindex="0"
+               aria-label="Volumen de la parte elegida" aria-valuemin="-60" aria-valuemax="24"
+               aria-valuenow="0" title="Arrastra arriba o abajo para subir o bajar esta parte">
+            <span class="tl-gain-value" id="tl-gain-value">0 dB</span>
+            <span class="tl-gain-hint" id="tl-gain-hint">arrastra ↕</span>
+          </div>
         </div>
       </div>
 
       <p class="muted small">
-        Arrastra las tarjetas para cambiar el orden · toca el tiempo o la barra de posición para
-        mover el cursor · la ✕ quita un tramo.
+        <strong>Arrastra sobre la onda</strong> para elegir una parte de la música: queda sombreada
+        y con la cajita de volumen encima, que se sube o se baja arrastrándola hacia arriba o hacia
+        abajo (con <kbd>Mayús</kbd>, más fina; la rueda sobre ella también sirve). Un doble clic
+        elige el tramo entero y <kbd>Esc</kbd> quita la selección.
+        Un clic suelto elige el tramo (la ✕ lo quita), sus bordes se arrastran para recortarlo y su
+        cabecera se arrastra para cambiar el orden.
         <kbd>Espacio</kbd> reproduce o pausa, <kbd>←</kbd> <kbd>→</kbd> mueven un segundo
         (<kbd>Mayús</kbd> los hace diez), <kbd>Inicio</kbd> y <kbd>Fin</kbd> van a los extremos,
         <kbd>Supr</kbd> borra el tramo elegido y <kbd>Ctrl</kbd>+<kbd>Z</kbd> deshace.
+        La <strong>rueda</strong> sobre la línea de tiempo acerca y aleja en el punto que señalas,
+        y <kbd>Mayús</kbd>+rueda (o el botón central, arrastrando) desplaza la vista.
       </p>
-      <p class="muted small hidden" id="tl-empty">
-        Añade un audio y pulsa «A la línea» para empezar a montar.
-      </p>
-
-      <!-- El inspector del tramo vive dentro de esta misma tarjeta: escuchar y
-           cortar son la misma tarea, así que no se reparten en dos sitios. -->
-      <div class="hidden" id="clip-card">
-        <div class="ed-head">
-          <h3>Tramo elegido</h3>
-          <span class="muted small" id="clip-title"></span>
-        </div>
-
-        <canvas id="wave" height="140" aria-label="Forma de onda del tramo"></canvas>
+      <div class="tl-empty-box hidden" id="tl-empty">
+        <p id="tl-empty-text">Todavía no hay nada en la línea de tiempo.</p>
         <p class="muted small">
-          Arrastra los tiradores para recortar. Lo que quede fuera del sombreado no se exporta.
+          Mientras no haya un tramo, los controles de arriba (reproducir, mover el cursor) están
+          apagados porque no hay nada que mover. Trae un audio aquí y podrás recortarlo, subirle o
+          bajarle el volumen a la parte que elijas y ampliar la vista con la rueda.
         </p>
-
-        <div class="wave-tools">
-          <label class="mini-field">Inicio
-            <input type="number" id="in-start" step="0.1" min="0" inputmode="decimal" />
-          </label>
-          <label class="mini-field">Fin
-            <input type="number" id="in-end" step="0.1" min="0" inputmode="decimal" />
-          </label>
-          <button class="btn btn-mini" type="button" id="btn-full">Tramo completo</button>
-          <button class="btn btn-mini" type="button" id="btn-split">Cortar en el cursor</button>
-          <button class="btn btn-mini" type="button" id="btn-duplicate">Duplicar</button>
-          <button class="btn btn-mini" type="button" id="btn-listen-clip">Escuchar el tramo</button>
-        </div>
-
-        <div class="clip-grid">
-          <label>Volumen <output id="out-gain">0 dB</output>
-            <input type="range" id="in-gain" min="-60" max="24" step="1" value="0" />
-          </label>
-          <label>Fundido de entrada <output id="out-fadein">0 s</output>
-            <input type="range" id="in-fadein" min="0" max="10" step="0.1" value="0" />
-          </label>
-          <label>Fundido de salida <output id="out-fadeout">0 s</output>
-            <input type="range" id="in-fadeout" min="0" max="10" step="0.1" value="0" />
-          </label>
-        </div>
-
-        <div class="wave-tools">
-          <button class="btn btn-mini" type="button" id="btn-mute">Silenciar</button>
-          <button class="btn btn-mini" type="button" id="btn-gain-all">Volumen a todos</button>
-          <button class="btn btn-mini" type="button" id="btn-fade-all">Fundidos a todos</button>
-        </div>
+        <button class="btn btn-mini" type="button" id="btn-empty-add">Traerlo a la línea</button>
       </div>
+
     </section>
 
     <!-- 3 · Exportar --------------------------------------------------------->

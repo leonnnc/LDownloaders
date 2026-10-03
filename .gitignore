@@ -80,3 +80,10 @@ backend/editor/
 shot-*.png
 diagnostico-menu/
 *.log.prev
+
+# Copias de seguridad locales: pueden llevar datos de uso (la del historial
+# tiene direcciones IP) y no forman parte del servicio.
+*.bak
+
+# Capturas de trabajo: sirven para revisar un cambio, no para el repositorio.
+captura-*.png

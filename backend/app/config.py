@@ -34,8 +34,14 @@ CLEANUP_INTERVAL_SECONDS = _env_int("VDL_CLEANUP_INTERVAL", 60)
 MAX_CONCURRENT_JOBS = _env_int("VDL_MAX_CONCURRENT_JOBS", 2)
 
 # Tamaño máximo aceptado por archivo, en MB. 0 = sin límite.
-# En producción conviene ponerlo: sin tope, un 4K largo puede llenar el disco.
-MAX_FILESIZE_MB = _env_int("VDL_MAX_FILESIZE_MB", 0)
+# Por defecto 2048: sin tope, un 4K largo puede llenar el disco, y el TTL que
+# borra los temporales es por tiempo, no por tamaño. Con 0 se desactiva.
+MAX_FILESIZE_MB = _env_int("VDL_MAX_FILESIZE_MB", 2048)
+
+# Espacio libre que se reserva en el disco, en MB. Antes de aceptar una
+# descarga se exige que queden al menos estos MB libres: es la única defensa
+# que mira el tamaño y no el reloj. 0 = no comprobar.
+MIN_FREE_MB = _env_int("VDL_MIN_FREE_MB", 2048)
 
 # Minutos que puede estar un trabajo en curso antes de darlo por colgado.
 # El recolector de basura NUNCA borra un trabajo activo antes de este plazo:

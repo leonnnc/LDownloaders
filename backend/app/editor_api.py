@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from . import config, editor
@@ -51,8 +51,34 @@ def _peaks_payload(asset: dict, path: Path) -> dict:
     }
 
 
-def build_router(rate_limit: Callable[..., None]) -> APIRouter:
+def build_router(
+    rate_limit: Callable[..., None],
+    guard: Callable[[str | None], bool] | None = None,
+) -> APIRouter:
+    """Rutas del editor de audio.
+
+    `guard` es el `require_admin_if_configured` de `main.py`, que se recibe
+    como parámetro para no importar `main` desde aquí (importación circular).
+    Cuando hay `VDL_ADMIN_TOKEN` configurado, los endpoints que cuestan CPU o
+    disco lo exigen: exportar es tiempo de CPU del servidor y subir archivos
+    ocupa disco, así que no deben quedar abiertos en internet.
+
+    Se protegen solo los cuatro endpoints que escriben (subir, traer de una
+    descarga, borrar y exportar). Los de lectura (onda, reproducción y lista)
+    se dejan abiertos a propósito: `<audio src>` y la descarga por rango no
+    pueden llevar cabeceras, así que exigir el token ahí rompería la escucha.
+    """
     router = APIRouter()
+
+    # Dependencia compartida: sin ella, `dependencies=[]` no hace nada.
+    dependencies = []
+    if guard is not None:
+        async def _check_token(
+            token: str | None = Header(None, alias="X-Admin-Token"),
+        ) -> None:
+            guard(token)
+
+        dependencies.append(Depends(_check_token))
 
     # -----------------------------------------------------------------------
     # Utilidades
@@ -126,7 +152,7 @@ def build_router(rate_limit: Callable[..., None]) -> APIRouter:
     # -----------------------------------------------------------------------
     # Fuentes
     # -----------------------------------------------------------------------
-    @router.post("/api/audio/upload", status_code=201)
+    @router.post("/api/audio/upload", status_code=201, dependencies=dependencies)
     async def api_audio_upload(request: Request, name: str | None = None) -> dict:
         """Sube un audio para editarlo.
 
@@ -181,7 +207,9 @@ def build_router(rate_limit: Callable[..., None]) -> APIRouter:
             # Si salió bien, el archivo ya se movió a su carpeta: esto no hace nada.
             landing.unlink(missing_ok=True)
 
-    @router.post("/api/audio/from-job/{job_id}", status_code=201)
+    @router.post(
+        "/api/audio/from-job/{job_id}", status_code=201, dependencies=dependencies
+    )
     async def api_audio_from_job(job_id: str, request: Request) -> dict:
         """Trae al editor una descarga en MP3 de esta misma sesión."""
         _require_enabled()
@@ -257,7 +285,7 @@ def build_router(rate_limit: Callable[..., None]) -> APIRouter:
         except editor.EditorError as exc:
             raise HTTPException(422, str(exc))
 
-    @router.delete("/api/audio/asset/{asset_id}")
+    @router.delete("/api/audio/asset/{asset_id}", dependencies=dependencies)
     def api_audio_delete(asset_id: str, request: Request) -> dict:
         """Borra una fuente del servidor. Es irreversible, se pide expresamente."""
         _require_enabled()
@@ -274,7 +302,7 @@ def build_router(rate_limit: Callable[..., None]) -> APIRouter:
     # -----------------------------------------------------------------------
     # Exportar el montaje
     # -----------------------------------------------------------------------
-    @router.post("/api/audio/render", status_code=202)
+    @router.post("/api/audio/render", status_code=202, dependencies=dependencies)
     async def api_audio_render(payload: editor.RenderRequest, request: Request) -> dict:
         """Aplica el montaje y genera el archivo final.
 

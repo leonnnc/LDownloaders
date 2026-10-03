@@ -250,17 +250,27 @@ puede ser tiempo real. Detalles, fuentes y cómo recompilarlo en
 ## Editor de audio
 
 `GET /editor` es un editor de audio en el navegador con el trabajo pesado en el
-servidor: **recortar**, **subir o bajar el volumen**, **unir varios audios** en el
-orden que quieras, **fundidos** de entrada y salida, y salida en **MP3, WAV, OGG o
-M4A**.
+servidor: **recortar**, **subir o bajar el volumen de la parte que elijas con el
+ratón**, **unir varios audios** en el orden que quieras, y salida en **MP3, WAV,
+OGG o M4A**.
 
 Cómo se usa:
 
 1. **Añade audio** — sube un archivo del equipo (o arrástralo a la ventana) o trae
    un MP3 que acabas de descargar, sin volver a subirlo.
-2. **Móntalo** — cada audio entra en la línea de tiempo como un tramo. Los tramos
-   se arrastran para cambiar el orden, se recortan con los tiradores de la forma
-   de onda, y cada uno lleva su volumen y sus fundidos.
+2. **Móntalo** — cada audio entra en la línea de tiempo como un tramo. La cabecera
+   del tramo se arrastra para cambiar el orden y sus bordes para recortarlo, todo
+   sobre la propia línea. **Arrastrando sobre la onda** se elige una parte —o el tramo
+   entero con un doble clic— y aparece encima una cajita de volumen que se sube o se
+   baja arrastrándola hacia arriba o hacia abajo; por dentro eso parte el montaje por
+   los bordes de lo elegido, así que lo que se oye y se ve es lo que va a salir. La línea de tiempo
+   tiene **zoom**: de serie el montaje entero cabe en la pantalla, y al ampliar se
+   recorta con precisión sin perder de vista el punto que estás mirando. Se maneja
+   con el ratón: la **rueda** sobre la línea acerca y aleja en el punto señalado,
+   <kbd>Mayús</kbd>+rueda (o la rueda horizontal del trackpad) desplaza la vista, el
+   **botón central** la desplaza arrastrando, y la **línea del cursor se arrastra**
+   directamente con el ratón. Con el teclado: <kbd>+</kbd> y <kbd>−</kbd> acercan y
+   alejan, y <kbd>0</kbd> vuelve a ver el montaje entero.
 3. **Escúchalo** — controles de reproducción completos: reproducir y pausar,
    ir al inicio y al final, saltos de ±5 y ±10 segundos, repetir el montaje sin
    parar, velocidad de 0,75× a 2× y una barra de posición arrastrable. El volumen
@@ -288,9 +298,13 @@ Decisiones que conviene conocer:
 * Los audios cargados se borran solos a las 6 h; las exportaciones, a los 30 min.
 
 > Exportar consume CPU del servidor: el editor tiene su propio cupo de peticiones y
-> topes de tamaño, duración y tramos. En un servidor público, ponlo detrás de
-> `VDL_ADMIN_TOKEN` o desactívalo con `VDL_EDITOR_ENABLED=false` si no quieres
-> regalar tiempo de CPU.
+> topes de tamaño, duración y tramos. Y cuando hay `VDL_ADMIN_TOKEN` configurado,
+> **subir, traer una descarga, borrar y exportar exigen el token** (`X-Admin-Token`):
+> sin él, el editor era una forma gratuita de gastar tu CPU y tu disco. Los
+> endpoints de lectura (onda, reproducción) siguen abiertos, porque `<audio src>`
+> no puede llevar cabeceras. El token se escribe una vez en el panel `/monitor` y
+> el editor lo reutiliza (misma clave en `localStorage`, mismo origen). Si no
+> quieres el editor en absoluto: `VDL_EDITOR_ENABLED=false`.
 
 ---
 
@@ -327,7 +341,7 @@ Sin supervisor, la actualización se instala en disco pero **nunca llega a usars
 
 | Ruta | Para qué |
 |---|---|
-| `GET /api/health` | Estado general, versión del motor, circuitos abiertos |
+| `GET /api/health` | Estado general (el mismo veredicto que el panel), espacio libre en disco, versión del motor y circuitos abiertos |
 | `GET /api/widget` | Payload compacto para el widget de Android |
 | `GET /api/monitor` | Estado completo para el panel de control |
 | `GET /monitor` | Panel de control (interfaz) |
@@ -413,7 +427,8 @@ Todas las variables son opcionales.
 | `VDL_DATA_DIR` | `backend/storage` | Carpeta de archivos temporales |
 | `VDL_FILE_TTL_MINUTES` | `15` | Minutos antes de borrar cada archivo |
 | `VDL_MAX_CONCURRENT_JOBS` | `2` | Descargas simultáneas |
-| `VDL_MAX_FILESIZE_MB` | `0` | Tamaño máximo por archivo (0 = sin límite) |
+| `VDL_MAX_FILESIZE_MB` | `2048` | Tamaño máximo por archivo, en MB (0 = sin límite) |
+| `VDL_MIN_FREE_MB` | `2048` | Espacio libre que se exige antes de aceptar una descarga (0 = no comprobar) |
 | `VDL_RATE_LIMIT_REQUESTS` | `20` | Solicitudes por ventana y por IP |
 | `VDL_RATE_LIMIT_WINDOW` | `60` | Tamaño de la ventana, en segundos |
 | `VDL_ALLOWED_DOMAINS` | vacío | Lista blanca, ej. `facebook.com,tiktok.com` |

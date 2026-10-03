@@ -19,6 +19,7 @@
     uploader: $("uploader"),
     source: $("source"),
     videoFormats: $("video-formats"),
+    mp3Sub: $("mp3-sub"),
     progressCard: $("progress-card"),
     progressLabel: $("progress-label"),
     progressPct: $("progress-pct"),
@@ -177,11 +178,23 @@
 
       const sub = document.createElement("span");
       sub.className = "chip-sub";
-      sub.textContent = f.filesize ? humanSize(f.filesize) : (f.muted ? "requiere FFmpeg" : "con audio");
+      // El peso va en la propia opción: se elige sabiendo lo que ocupa. El
+      // «≈» avisa de que es una estimación nuestra y no una cifra del sitio.
+      sub.textContent = f.filesize
+        ? `${f.estimated ? "≈ " : ""}${humanSize(f.filesize)}`
+        : (f.muted ? "requiere FFmpeg" : "con audio");
 
       btn.append(main, sub);
       btn.addEventListener("click", () => startDownload("mp4", f.format_id, url));
       el.videoFormats.appendChild(btn);
+    }
+
+    // El MP3 también tiene peso, y se estima solo con la duración: la
+    // conversión sale a 320 kbps constantes haga lo que haga el original.
+    if (el.mp3Sub) {
+      el.mp3Sub.textContent = info.duration
+        ? `≈ ${humanSize((320 * 1000 / 8) * info.duration)}`
+        : "solo audio";
     }
 
     el.result.classList.remove("hidden");

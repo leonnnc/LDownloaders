@@ -598,23 +598,69 @@ def require_admin_if_configured(token: str | None) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Espacio en disco
+# ---------------------------------------------------------------------------
+def _disk_usage_payload() -> dict:
+    """Espacio libre donde se escriben los temporales."""
+    try:
+        usage = shutil.disk_usage(config.DATA_DIR)
+    except OSError:
+        return {"free_mb": None, "min_free_mb": config.MIN_FREE_MB}
+    return {
+        "free_mb": round(usage.free / (1024 * 1024), 1),
+        "min_free_mb": config.MIN_FREE_MB,
+        "ok": config.MIN_FREE_MB == 0
+        or usage.free >= config.MIN_FREE_MB * 1024 * 1024,
+    }
+
+
+def _reject_if_disk_full() -> None:
+    """Rechaza una descarga nueva si al disco le queda poco.
+
+    Hasta ahora la única defensa era el TTL, y es por tiempo, no por tamaño:
+    dos descargas grandes podían llenar el disco antes de que expirara nada, y
+    entonces el servicio se caía de verdad. Si no se puede medir el espacio, se
+    deja pasar: negarse a descargar porque no sabemos leer el disco sería peor
+    que el riesgo que se evita.
+    """
+    if not config.MIN_FREE_MB:
+        return
+    try:
+        free = shutil.disk_usage(config.DATA_DIR).free
+    except OSError:
+        return
+    if free < config.MIN_FREE_MB * 1024 * 1024:
+        libre = free / (1024 * 1024)
+        raise HTTPException(
+            507,
+            f"No queda espacio suficiente en el servidor: hay {libre:.0f} MB libres "
+            f"y se reservan {config.MIN_FREE_MB} MB. Intenta de nuevo más tarde.",
+        )
+
+
 @app.get("/api/health")
 def health() -> dict:
+    """Estado del servicio, con el mismo veredicto que el panel.
+
+    El estado sale de `status.evaluate()`, la única fuente de verdad, que es la
+    que alimentan el panel `/monitor` y el widget. Antes este endpoint
+    recalculaba su propio veredicto (miraba FFmpeg, los circuitos y las
+    plataformas por su cuenta) y no podía decir «caído» nunca: el mismo sistema
+    daba dos diagnósticos distintos según a quién se le preguntara. Importa
+    porque el HEALTHCHECK del contenedor pregunta justo aquí.
+    """
     ffmpeg = ffmpeg_status()
-    circuits_open = circuits.open_count()
-    platform_states = metrics.platform_states()
-
-    degraded = [name for name, state in platform_states.items() if state in ("degradado", "caido")]
-
-    if not ffmpeg["available"] or circuits_open:
-        overall = "degradado"
-    elif degraded:
-        overall = "degradado"
-    else:
-        overall = "ok"
+    state = system_status.evaluate()
+    circuits_open = state["circuits_open"]
+    degraded = state["degraded"]
 
     return {
-        "status": overall,
+        "status": state["status"],
+        "status_label": state["label"],
+        "reasons": state["reasons"],
+        "restart_advised": state["restart_advised"],
+        "disk": _disk_usage_payload(),
         "version": "0.1.0",
         "engine": {
             "name": "yt-dlp",
@@ -833,7 +879,12 @@ def api_pairing(
     (cabecera `X-Admin-Token`): es lo único que evita que cualquiera que abra
     el monitor se lleve la credencial que reinicia el servicio.
     """
-    authorized = bool(config.ADMIN_TOKEN) and token == config.ADMIN_TOKEN
+    # Cupo propio: es un endpoint que se puede sondear sin coste y devuelve
+    # `token_masked`, que ayuda a adivinar el token a ciegas.
+    rate_limit(request, scope="pairing", limit=60)
+    # Comparación en tiempo constante. Con `==` el tiempo de respuesta revela
+    # cuántos caracteres iniciales se acertaron, carácter a carácter.
+    authorized = _token_matches(token)
     return pairing.payload(request, authorized=authorized)
 
 
@@ -1064,6 +1115,11 @@ async def api_download(payload: DownloadRequest, request: Request) -> dict:
     url = validate_url(payload.url)
     await asyncio.to_thread(assert_public_target, url)
 
+    # El disco se comprueba aquí, no en el recolector: sin esto, el TTL (que es
+    # por tiempo) es la única defensa y dos descargas grandes pueden llenar el
+    # disco antes de que expire nada.
+    _reject_if_disk_full()
+
     if payload.kind == "mp3" and not ffmpeg_status()["available"]:
         raise HTTPException(
             503,
@@ -1151,7 +1207,9 @@ async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
 # Va en su propio router y recibe el limitador de aquí: así el editor no
 # necesita importar nada de este archivo (ni este del interior del editor).
 # ---------------------------------------------------------------------------
-app.include_router(editor_api.build_router(rate_limit))
+app.include_router(
+    editor_api.build_router(rate_limit, guard=require_admin_if_configured)
+)
 
 
 # ---------------------------------------------------------------------------

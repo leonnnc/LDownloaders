@@ -25,6 +25,13 @@ class PlatformStats:
     last_error: str | None = None
     last_success_at: float | None = None
     last_failure_at: float | None = None
+    # Fallos que NO son de la plataforma: enlaces que no existen, videos
+    # privados o borrados. Se cuentan aparte a propósito. Si entraran en
+    # `recent`, cinco enlaces malos pegados por un visitante dejarían la
+    # plataforma en «caído», y con eso el diagnóstico global anunciaría una
+    # avería que no existe y aconsejaría reiniciar un servicio sano.
+    user_errors: int = 0
+    last_user_error: str | None = None
     # Ventana deslizante de los últimos 50 resultados para una tasa realista.
     recent: Deque[bool] = field(default_factory=lambda: deque(maxlen=50))
 
@@ -58,6 +65,8 @@ class PlatformStats:
             "total": self.total,
             "consecutive_failures": self.consecutive_failures,
             "last_error": self.last_error,
+            "user_errors": self.user_errors,
+            "last_user_error": self.last_user_error,
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
         }
@@ -101,6 +110,20 @@ class Metrics:
                 stats.last_failure_at = now
             self._counters[f"platform.{key}.{'ok' if ok else 'fail'}"] += 1
 
+    def record_user_error(self, platform: str, error: str | None = None) -> None:
+        """Anota un fallo del que no tiene la culpa la plataforma.
+
+        El enlace que trajo el usuario no existe, el video es privado o lo
+        borraron: eso no dice nada del sitio. Cuenta en su propio contador y
+        deja intacta la ventana que decide si la plataforma está sana.
+        """
+        key = (platform or "desconocido").lower()
+        with self._lock:
+            stats = self._platform(key)
+            stats.user_errors += 1
+            stats.last_user_error = (error or "")[:300]
+            self._counters[f"platform.{key}.usuario"] += 1
+
     def platform(self, name: str) -> PlatformStats | None:
         with self._lock:
             return self._platforms.get((name or "").lower())
@@ -129,6 +152,14 @@ class Metrics:
                 "parse_fail": counters.get("parse.fail", 0),
                 "download_ok": counters.get("download.ok", 0),
                 "download_fail": counters.get("download.fail", 0),
+            },
+            # Enlaces inválidos del usuario. Van aparte de `requests` a
+            # propósito: `status.evaluate()` cuenta las muestras de `requests`
+            # para decidir si la tasa merece crédito, y un enlace muerto no es
+            # una muestra válida del estado del servicio.
+            "invalid_requests": {
+                "parse": counters.get("parse.invalid", 0),
+                "download": counters.get("download.invalid", 0),
             },
             "overall_success_rate": round(overall_ok / total, 3) if total else None,
             "counters": counters,

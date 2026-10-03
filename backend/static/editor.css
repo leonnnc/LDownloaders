@@ -115,6 +115,21 @@
 }
 
 /* ---------- 2 · Línea de tiempo ---------- */
+/* Línea de tiempo vacía: con el montaje vacío no hay nada que tocar, así que ese
+   hueco se usa para explicar qué falta en vez de dejar un renglón apagado. */
+.tl-empty-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.tl-empty-box p { margin: 0; font-size: 13.5px; }
+
 .tl {
   position: relative;
   border: 1px solid var(--border);
@@ -212,6 +227,29 @@
 
 .tl-clip-wave { display: block; width: 100%; height: 46px; }
 
+/* Tiradores del tramo: se recorta arrastrando sus bordes, sin salir de la línea
+   de tiempo. Solo se ven en el tramo elegido. */
+.tl-clip-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 9px;
+  display: none;
+  z-index: 1;
+  cursor: ew-resize;
+  touch-action: none;
+  background: linear-gradient(to right, color-mix(in srgb, var(--accent) 55%, transparent), transparent);
+}
+.tl-clip-handle.end {
+  left: auto;
+  right: 0;
+  background: linear-gradient(to left, color-mix(in srgb, var(--accent) 55%, transparent), transparent);
+}
+.tl-clip.selected .tl-clip-handle { display: block; }
+/* La cabecera va por encima del tirador: la ✕ tiene que seguir pulsándose. */
+.tl-clip-head { position: relative; z-index: 2; }
+
 .tl-clip-foot {
   display: flex;
   gap: 4px;
@@ -243,67 +281,63 @@
   z-index: 3;
 }
 
-/* ---------- 3 · Tramo elegido ---------- */
-#wave {
-  display: block;
-  width: 100%;
-  height: 140px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  touch-action: none;
+/* Zona de agarre del cursor: la línea es fina, así que se arrastra con un margen
+   ancho a los lados. Va por encima de los tramos para no tener que apuntar. */
+.tl-grab {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -7px;
+  width: 15px;
+  z-index: 4;
   cursor: ew-resize;
+  touch-action: none;
 }
 
-.wave-tools {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 10px 0;
+/* La parte elegida con el ratón: se sombrea por encima de la onda. No recibe
+   clics (pointer-events) para que se pueda seguir arrastrando por debajo. */
+.tl-select {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-left: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
 }
-.mini-field {
+
+/* La cajita del volumen: vive dentro de la línea de tiempo, encima de la parte
+   elegida, y se maneja arrastrándola. Es el único sitio donde se cambia el volumen. */
+.tl-gain {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  width: 124px;
+  z-index: 5;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  font-size: 11.5px;
-  color: var(--text-3);
-}
-.mini-field input {
-  width: 92px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
+  align-items: center;
+  gap: 1px;
+  padding: 5px 8px;
+  border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--shadow);
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+.tl-gain:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tl-gain-value {
   font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
 }
-
-.clip-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-  margin: 12px 0;
-}
-.clip-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--text-2);
-}
-.clip-grid output { font-size: 12px; color: var(--text-3); }
-.clip-grid input[type="range"] { width: 100%; accent-color: var(--accent); }
-
-/* ---------- Inspector del tramo (dentro de la tarjeta de edicion) ----------
-   Escuchar y cortar son la misma tarea: el inspector deja de ser una tarjeta
-   aparte y se separa con una linea, no con otro marco. */
-#clip-card {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-.ed-head h3 { margin: 0; font-size: 14px; letter-spacing: -.01em; }
+.tl-gain-hint { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
 
 /* ---------- 3 · Exportar ---------- */
 .export-grid {
@@ -422,9 +456,7 @@
   .tl-scroll { min-height: 132px; }
   .tl-clip-wave { height: 38px; }
   .asset-actions { width: 100%; }
-  .wave-tools { gap: 6px; }
   .transport { gap: 4px; padding: 6px; }
   .transport .nav-btn { min-width: 36px; height: 32px; padding: 0 6px; font-size: 11.5px; }
   .speed-field { margin-left: 0; }
-  .mini-field input { width: 78px; }
 }

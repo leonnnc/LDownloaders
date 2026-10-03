@@ -32,7 +32,7 @@
     <section class="hero">
       <h1>Descarga videos y audio<br /><span class="grad">en un solo paso</span></h1>
       <p class="sub">
-        Pega el enlace, elige la calidad y guarda el archivo.
+        Pega el enlace, elige la calidad y el archivo se guarda solo.
         Compatible con cientos de sitios: Facebook, Instagram, TikTok, YouTube, X y más.
       </p>
     </section>
@@ -73,7 +73,7 @@
         </li>
         <li class="howto-step">
           <span class="howto-num">3</span>
-          <span class="howto-text">Guarda el archivo</span>
+          <span class="howto-text">Se guarda solo</span>
         </li>
       </ol>
     </section>
@@ -147,7 +147,7 @@
         <div class="chips">
           <button class="chip chip-audio" data-kind="mp3">
             <span class="chip-main">MP3 · 320 kbps</span>
-            <span class="chip-sub">solo audio</span>
+            <span class="chip-sub" id="mp3-sub">solo audio</span>
           </button>
         </div>
       </div>
@@ -161,7 +161,7 @@
       </div>
       <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
       <p class="muted small" id="progress-file"></p>
-      <a class="btn btn-success hidden" id="download-link" download>Guardar archivo</a>
+      <a class="dl-fallback hidden" id="download-link" download>¿No se guardó? Guárdalo aquí</a>
       <a class="btn hidden" id="edit-link" href="/editor">Editar el audio</a>
     </section>
 

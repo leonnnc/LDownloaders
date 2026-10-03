@@ -36,8 +36,11 @@
     tlRuler: $("tl-ruler"),
     tlClips: $("tl-clips"),
     tlPlayhead: $("tl-playhead"),
+    tlGrab: $("tl-grab"),
     tlTime: $("tl-time"),
     tlEmpty: $("tl-empty"),
+    tlEmptyText: $("tl-empty-text"),
+    btnEmptyAdd: $("btn-empty-add"),
     btnPlay: $("btn-play"),
     btnStart: $("btn-start"),
     btnEnd: $("btn-end"),
@@ -48,24 +51,10 @@
     btnLoop: $("btn-loop"),
     speed: $("speed"),
     scrub: $("scrub"),
-    clipCard: $("clip-card"),
-    clipTitle: $("clip-title"),
-    wave: $("wave"),
-    inStart: $("in-start"),
-    inEnd: $("in-end"),
-    btnFull: $("btn-full"),
-    btnSplit: $("btn-split"),
-    btnDuplicate: $("btn-duplicate"),
-    btnListenClip: $("btn-listen-clip"),
-    inGain: $("in-gain"),
-    outGain: $("out-gain"),
-    inFadeIn: $("in-fadein"),
-    outFadeIn: $("out-fadein"),
-    inFadeOut: $("in-fadeout"),
-    outFadeOut: $("out-fadeout"),
-    btnMute: $("btn-mute"),
-    btnGainAll: $("btn-gain-all"),
-    btnFadeAll: $("btn-fade-all"),
+    tlSelect: $("tl-select"),
+    tlGain: $("tl-gain"),
+    tlGainValue: $("tl-gain-value"),
+    tlGainHint: $("tl-gain-hint"),
     exportCard: $("export-card"),
     outName: $("out-name"),
     outFormat: $("out-format"),
@@ -90,6 +79,10 @@
     playing: false,
     loop: false,       // repetir el montaje al llegar al final
     rate: 1,           // velocidad de reproducción
+    zoom: 1,           // ampliación de la línea de tiempo respecto a «ajustar»
+    draggingCursor: false, // el usuario arrastra la línea con el ratón
+    selection: null,   // parte elegida arrastrando sobre la onda: {start, end} del montaje
+    gainGesture: null, // el ajuste de volumen en curso sobre esa parte
     scrubbing: false,  // el usuario está arrastrando la barra de posición
     anchorWall: 0,     // reloj del sistema al empezar a reproducir
     anchorCursor: 0,   // punto del montaje donde empezó esa reproducción
@@ -150,9 +143,25 @@
 
   /* ---------------- servidor ---------------- */
 
+  // Misma clave que el panel (/monitor): el token se escribe una vez en el
+  // panel y el editor lo hereda, porque las dos páginas comparten origen.
+  const TOKEN_KEY = "vdl_admin_token";
+
+  function authHeaders() {
+    try {
+      const value = localStorage.getItem(TOKEN_KEY);
+      return value ? { "X-Admin-Token": value } : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
   const API = {
     async request(path, options = {}) {
-      const res = await fetch(path, options);
+      const res = await fetch(path, {
+        ...options,
+        headers: { ...authHeaders(), ...(options.headers || {}) },
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
       return data;
@@ -177,6 +186,8 @@
         const query = `?name=${encodeURIComponent(file.name || "audio")}`;
         xhr.open("POST", `/api/audio/upload${query}`);
         xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        const adminToken = authHeaders()["X-Admin-Token"];
+        if (adminToken) xhr.setRequestHeader("X-Admin-Token", adminToken);
         xhr.upload.addEventListener("progress", (event) => {
           if (event.lengthComputable) onProgress(event.loaded / event.total);
         });
@@ -272,11 +283,94 @@
     return null;
   }
 
-  function pixelsPerSecond() {
+  /* ---------------- escala y zoom de la línea de tiempo ----------------
+     «Ajustar» (zoom = 1) es ver el montaje entero de una vez: la escala sale de
+     repartir el ancho disponible entre la duración total. A partir de ahí el
+     usuario amplía, y dos topes evitan que la vista se vuelva inmanejable: ni se
+     pasa de ZOOM_MAX_PPS px/s de detalle ni de ZOOM_MAX_WIDTH px de contenido
+     (con más, cada onda sería un lienzo enorme que el navegador no dibuja bien). */
+
+  const ZOOM_STEP = 1.25;        // cuánto cambia el zoom en cada pulsación
+  const ZOOM_MAX_PPS = 240;      // px por segundo con el máximo detalle
+  const ZOOM_MAX_WIDTH = 10000;  // px de ancho máximo del contenido
+
+  function fitScale() {
     const width = el.tlScroll.clientWidth || 900;
     const length = total();
     if (!length) return 12;
-    return Math.min(48, Math.max(3, (width - 2) / length));
+    return (width - 2) / length;
+  }
+
+  function maxScale() {
+    const length = total();
+    if (!length) return fitScale();
+    return Math.max(fitScale(), Math.min(ZOOM_MAX_PPS, ZOOM_MAX_WIDTH / length));
+  }
+
+  function maxZoom() {
+    const base = fitScale();
+    if (!base) return 1;
+    return Math.max(1, maxScale() / base);
+  }
+
+  function pixelsPerSecond() {
+    const base = fitScale();
+    if (!total()) return base;
+    return Math.min(maxScale(), Math.max(base, base * state.zoom));
+  }
+
+  // Capturar el puntero deja el arrastre pegado aunque el ratón salga del elemento.
+  // Va protegido: con un puntero que el navegador no reconoce lanza excepción, y sin
+  // esto el arrastre ni siquiera empezaría.
+  function capturePointer(element, pointerId) {
+    try {
+      element.setPointerCapture(pointerId);
+    } catch (err) {
+      // Sin captura el arrastre sigue funcionando con los eventos de window.
+    }
+  }
+
+  // Instante del montaje que cae bajo un punto de la pantalla. Se mide contra el
+  // contenido ya desplazado: con el zoom puesto, el montaje no cabe entero y el
+  // rectángulo del contenedor se queda corto, así que hay que sumar lo desplazado.
+  function timeAtClientX(clientX) {
+    const rect = el.tlScroll.getBoundingClientRect();
+    return Math.max(0, (clientX - rect.left + el.tlScroll.scrollLeft) / pixelsPerSecond());
+  }
+
+  // Cambia la escala sin perder de vista el punto que se está mirando: el instante
+  // ancla se queda donde estaba (bajo el ratón, bajo el cursor o en el centro).
+  function setZoom(next, anchorTime, anchorX) {
+    const before = pixelsPerSecond();
+    const view = el.tlScroll.clientWidth || 0;
+    const time = anchorTime == null ? (el.tlScroll.scrollLeft + view / 2) / before : anchorTime;
+    const at = anchorX == null ? view / 2 : anchorX;
+
+    state.zoom = Math.min(maxZoom(), Math.max(1, next));
+    const after = pixelsPerSecond();
+    updateTransport();
+    if (Math.abs(after - before) < 0.0001) return;
+
+    renderTimeline();
+    el.tlScroll.scrollLeft = Math.max(0, time * after - at);
+  }
+
+  function zoomBy(factor, anchorTime, anchorX) {
+    setZoom(state.zoom * factor, anchorTime, anchorX);
+  }
+
+  // Con el montaje ampliado el cursor puede salirse por los lados: se desplaza la
+  // vista lo justo para no perderlo. Si el montaje entero cabe, no hay nada que hacer.
+  function keepCursorVisible(x) {
+    if (state.zoom <= 1.001) return;
+    if (state.draggingCursor) return; // mientras se arrastra la línea manda el ratón
+    const view = el.tlScroll.clientWidth || 0;
+    if (!view) return;
+    const margin = view * 0.15;
+    const left = el.tlScroll.scrollLeft;
+    if (x < left + margin || x > left + view - margin) {
+      el.tlScroll.scrollLeft = Math.max(0, x - view / 3);
+    }
   }
 
   /* ---------------- forma de onda ---------------- */
@@ -399,6 +493,7 @@
       card.append(info, actions);
       el.assetList.appendChild(card);
     }
+    if (!state.clips.length) syncEmptyState();
   }
 
   async function loadSources() {
@@ -542,37 +637,74 @@
     refresh();
   }
 
-  function duplicateClip(clipId) {
-    const index = state.clips.findIndex((clip) => clip.id === clipId);
-    if (index < 0) return;
-    commit(() => {
-      const copy = { ...state.clips[index], id: uid() };
-      state.clips.splice(index + 1, 0, copy);
-      state.selectedId = copy.id;
-    });
+  /* ---------------- selección sobre la onda ----------------
+     Arrastrar sobre la onda elige un trozo de música. Para darle un volumen no hace
+     falta ninguna estructura nueva: el montaje ya son tramos con su ganancia, así que
+     la parte elegida se «cuece» partiendo el montaje justo en sus bordes y ajustando
+     los tramos que quedan dentro. Lo que se ve es lo que va a salir al exportar. */
+
+  const MIN_SEL = 0.05; // segundos: una parte más corta que esto no es nada
+
+  // Parte en dos el tramo que contiene ese instante del montaje. Si el instante ya cae
+  // en un corte, no hace nada. Los fundidos se reparten: el trozo de delante se queda
+  // con el de entrada y el de detrás con el de salida.
+  function splitAt(time) {
+    const hit = locate(time);
+    if (!hit) return false;
+    const { clip, offset } = hit;
+    if (offset < MIN_SEL || offset > clipDuration(clip) - MIN_SEL) return false;
+
+    const at = clip.start + offset;
+    const second = { ...clip, id: uid(), start: at, fadeIn: 0 };
+    clip.end = at;
+    clip.fadeOut = 0;
+    const index = state.clips.findIndex((item) => item.id === clip.id);
+    state.clips.splice(index + 1, 0, second);
+    return true;
   }
 
-  function splitAtCursor() {
-    const position = locate(state.cursor);
-    if (!position) return;
-    const { clip, offset } = position;
-    if (offset < 0.1 || offset > clipDuration(clip) - 0.1) {
-      showError("Coloca el cursor dentro del tramo (no en el borde) para cortarlo.");
-      return;
+  // Los tramos que tocan ese rango, sin partir nada (para contar cuántos hará falta).
+  function clipsInRange(range) {
+    let acc = 0;
+    const found = [];
+    for (const clip of state.clips) {
+      const from = acc;
+      const to = acc + clipDuration(clip);
+      acc = to;
+      if (to > range.start + MIN_SEL && from < range.end - MIN_SEL) found.push(clip);
     }
-    commit(() => {
-      const at = clip.start + offset;
-      const second = { ...clip, id: uid(), start: at };
-      clip.end = at;
-      const index = state.clips.findIndex((item) => item.id === clip.id);
-      state.clips.splice(index + 1, 0, second);
-      state.selectedId = second.id;
-    });
+    return found;
+  }
+
+  // Los tramos que quedan dentro del rango, partiéndolo si hace falta. Es el paso que
+  // convierte «esta parte suena más bajo» en algo que FFmpeg puede escribir.
+  function selectionPieces(range) {
+    splitAt(range.start);
+    splitAt(range.end);
+
+    let acc = 0;
+    const pieces = [];
+    for (const clip of state.clips) {
+      const from = acc;
+      acc += clipDuration(clip);
+      if (from >= range.start - MIN_SEL && acc <= range.end + MIN_SEL) pieces.push(clip);
+    }
+    return pieces;
+  }
+
+  // Dónde cae un tramo completo en el montaje (lo usa el doble clic).
+  function clipRange(clipId) {
+    let acc = 0;
+    for (const clip of state.clips) {
+      const from = acc;
+      acc += clipDuration(clip);
+      if (clip.id === clipId) return { start: from, end: acc };
+    }
+    return null;
   }
 
   function refresh() {
     renderTimeline();
-    renderInspector();
     updateTransport();
   }
 
@@ -587,9 +719,25 @@
     return badges;
   }
 
+  // La línea vacía es el único momento en que no hay nada que hacer con el ratón: en
+  // vez de dejar los controles apagados y una nota diminuta, se dice qué falta y se
+  // ofrece el paso siguiente —traer el audio ya cargado— con un botón de verdad.
+  function syncEmptyState() {
+    const asset = state.assets[0] || null;
+    el.tlEmptyText.textContent = asset
+      ? `«${asset.name}» está cargado y todavía no está en la línea de tiempo.`
+      : "Todavía no hay ningún audio cargado.";
+    el.btnEmptyAdd.textContent = asset ? "Traerlo a la línea" : "Ir a cargar un audio";
+  }
+
   function renderTimeline() {
     const empty = state.clips.length === 0;
+    if (empty) {
+      state.zoom = 1; // sin montaje no hay nada que ampliar
+      state.selection = null;
+    }
     el.tlEmpty.classList.toggle("hidden", !empty);
+    if (empty) syncEmptyState();
     el.tlClips.innerHTML = "";
 
     const scale = pixelsPerSecond();
@@ -605,7 +753,6 @@
       const block = document.createElement("article");
       block.className = "tl-clip";
       block.dataset.id = clip.id;
-      block.draggable = true;
       if (clip.id === state.selectedId) block.classList.add("selected");
       if (clip.gainDb <= -60) block.classList.add("muted");
       block.style.width = `${width}px`;
@@ -613,6 +760,9 @@
 
       const head = document.createElement("div");
       head.className = "tl-clip-head";
+      // La cabecera es la que se arrastra para reordenar: la onda queda libre para
+      // elegir una parte con el ratón, que es lo que se hace mucho más a menudo.
+      head.draggable = true;
       const name = document.createElement("span");
       name.className = "tl-clip-name";
       name.textContent = asset ? asset.name : "audio";
@@ -631,6 +781,19 @@
       canvas.className = "tl-clip-wave";
       block.append(head, canvas);
 
+      // Tiradores: el tramo se recorta arrastrando sus bordes, aquí mismo.
+      for (const edge of ["start", "end"]) {
+        const handle = document.createElement("span");
+        handle.className = `tl-clip-handle ${edge}`;
+        handle.setAttribute("role", "separator");
+        handle.setAttribute("aria-label", edge === "start"
+          ? "Recortar el inicio del tramo"
+          : "Recortar el final del tramo");
+        handle.addEventListener("pointerdown", (event) => beginTrim(event, clip.id, edge));
+        handle.addEventListener("dragstart", (event) => event.preventDefault());
+        block.appendChild(handle);
+      }
+
       const foot = document.createElement("div");
       foot.className = "tl-clip-foot";
       for (const badge of clipBadges(clip)) {
@@ -644,7 +807,6 @@
       block.addEventListener("click", () => {
         state.selectedId = clip.id;
         renderTimeline();
-        renderInspector();
       });
 
       // Reordenar: es la forma de decidir en qué orden se unen los audios.
@@ -685,6 +847,7 @@
     });
 
     updatePlayhead();
+    renderSelection();
   }
 
   function drawClipWave(canvas, clip, data, width) {
@@ -727,13 +890,15 @@
   function renderRuler(length, scale) {
     el.tlRuler.innerHTML = "";
     if (!length) return;
-    const steps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
+    const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
     const step = steps.find((value) => value * scale >= 64) || steps[steps.length - 1];
     for (let t = 0; t <= length + 0.001; t += step) {
       const tick = document.createElement("span");
       tick.className = "tl-tick";
       tick.style.left = `${t * scale}px`;
-      tick.textContent = fmtTime(t);
+      // Al ampliar, la regla baja de un segundo y «0:01» se repetiría: con pasos
+      // cortos se enseña el decimal.
+      tick.textContent = step < 1 ? `${t.toFixed(1)} s` : fmtTime(t);
       el.tlRuler.appendChild(tick);
     }
   }
@@ -753,8 +918,14 @@
 
   function updatePlayhead() {
     const scale = pixelsPerSecond();
-    el.tlPlayhead.style.transform = `translateX(${state.cursor * scale}px)`;
-    el.tlPlayhead.style.opacity = state.clips.length ? "0.85" : "0";
+    const x = state.cursor * scale;
+    const hasClips = state.clips.length > 0;
+    el.tlPlayhead.style.transform = `translateX(${x}px)`;
+    el.tlPlayhead.style.opacity = hasClips ? "0.85" : "0";
+    // La línea es fina: para poder agarrarla con el ratón lleva encima una zona ancha.
+    el.tlGrab.style.transform = `translateX(${x}px)`;
+    el.tlGrab.classList.toggle("hidden", !hasClips);
+    keepCursorVisible(x);
   }
 
   function updateTransport() {
@@ -766,12 +937,6 @@
       ? `${count} tramo${count > 1 ? "s" : ""} · ${fmtTime(total())} de salida`
       : "Añade algún tramo para poder exportar.";
     el.btnExport.disabled = count === 0;
-    el.btnSplit.disabled = !state.selectedId;
-    el.btnDuplicate.disabled = !state.selectedId;
-    el.btnListenClip.disabled = !state.selectedId;
-    el.btnMute.disabled = !state.selectedId;
-    el.btnGainAll.disabled = !state.selectedId;
-    el.btnFadeAll.disabled = !state.selectedId;
 
     // Controles de reproducción: sin montaje no hay nada que mover.
     const empty = count === 0;
@@ -807,82 +972,126 @@
     if (state.playing) startPlayback(state.cursor);
   }
 
-  /* ---------------- inspector del tramo ---------------- */
+  /* ---------------- volumen de la parte elegida ----------------
+     La cajita se arrastra hacia arriba o hacia abajo y el volumen de esa parte cambia.
+     El primer movimiento es el que parte el montaje (una sola vez); después solo cambia
+     el número, así que se puede subir y bajar sin trocear el montaje a cada píxel, y
+     todo el gesto acaba siendo un único paso de deshacer. */
 
-  function renderInspector() {
-    const clip = clipOf(state.selectedId);
-    el.clipCard.classList.toggle("hidden", !clip);
-    if (!clip) return;
-
-    const asset = assetOf(clip.assetId);
-    el.clipTitle.textContent = asset ? asset.name : "audio";
-    el.inStart.value = clip.start.toFixed(2);
-    el.inEnd.value = clip.end.toFixed(2);
-    el.inGain.value = String(clip.gainDb);
-    el.outGain.textContent = clip.gainDb <= -60 ? "silencio" : `${clip.gainDb} dB`;
-    el.inFadeIn.value = String(clip.fadeIn);
-    el.outFadeIn.textContent = `${clip.fadeIn} s`;
-    el.inFadeOut.value = String(clip.fadeOut);
-    el.outFadeOut.textContent = `${clip.fadeOut} s`;
-    drawInspectorWave(clip);
+  function fmtDb(value) {
+    if (value <= -60) return "silencio";
+    return `${value > 0 ? "+" : ""}${value} dB`;
   }
 
-  function drawInspectorWave(clip) {
-    const asset = assetOf(clip.assetId);
-    const data = state.peaks.get(clip.assetId);
-    const width = el.wave.parentElement.clientWidth || 600;
-    const height = 140;
+  function beginGainGesture() {
+    if (state.gainGesture) return true;
+    const range = state.selection;
+    if (!range || !state.clips.length) return false;
 
-    if (!asset || !data) {
-      drawPeaks(el.wave, null, 1, 0, 0, { width, height });
-      return;
+    const touched = clipsInRange(range);
+    if (!touched.length) return false;
+
+    // Cada tramo tocado puede partirse en dos: se avisa antes de llegar al tope.
+    if (state.clips.length + touched.length * 2 > 55) {
+      showError("El montaje ya tiene muchos tramos: no caben más cortes para esta parte.");
+      return false;
     }
 
-    drawPeaks(el.wave, data.peaks, data.per_second, 0, asset.duration, {
-      width,
-      height,
-      color: cssVar("--accent"),
-      alpha: 0.85,
-    });
-
-    // Fuera del tramo elegido se sombrea: lo que no se exporta tiene que verse.
-    const ctx = el.wave.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const startX = (clip.start / asset.duration) * width;
-    const endX = (clip.end / asset.duration) * width;
-
-    ctx.fillStyle = cssVar("--surface");
-    ctx.globalAlpha = 0.72;
-    ctx.fillRect(0, 0, startX, height);
-    ctx.fillRect(endX, 0, width - endX, height);
-    ctx.globalAlpha = 1;
-
-    for (const x of [startX, endX]) {
-      ctx.fillStyle = cssVar("--accent");
-      ctx.fillRect(Math.max(0, Math.min(width - 2, x - 1)), 0, 2, height);
-      ctx.fillRect(Math.max(0, Math.min(width - 10, x - 5)), 0, 10, 6);
-    }
-  }
-
-  function applyRange(startValue, endValue) {
-    const clip = clipOf(state.selectedId);
-    const asset = clip && assetOf(clip.assetId);
-    if (!clip || !asset) return;
     const before = snapshot();
-    let start = Math.max(0, Math.min(Number(startValue) || 0, asset.duration));
-    let end = Math.max(0, Math.min(Number(endValue) || 0, asset.duration));
-    if (end - start < 0.05) {
-      showError("El fin tiene que quedar después del inicio.");
-      renderInspector();
+    state.gainGesture = {
+      before,
+      pieces: selectionPieces(range),
+      base: new Map(),
+    };
+    for (const clip of state.gainGesture.pieces) {
+      state.gainGesture.base.set(clip.id, clip.gainDb);
+    }
+    // Se repinta una sola vez, ya con los tramos partidos: a partir de aquí solo se
+    // tocan las etiquetas.
+    renderTimeline();
+    return true;
+  }
+
+  function gainResultLabel(pieces) {
+    if (!pieces.length) return "";
+    const values = pieces.map((clip) => clip.gainDb);
+    const low = Math.min.apply(null, values);
+    const high = Math.max.apply(null, values);
+    if (low === high) return low <= -60 ? "queda en silencio" : `queda en ${fmtDb(low)}`;
+    return `queda entre ${fmtDb(low)} y ${fmtDb(high)}`;
+  }
+
+  // Solo se refrescan las etiquetas del tramo: rehacer la onda entera a cada píxel del
+  // arrastre costaría mucho para nada.
+  function updateClipBadges(clip) {
+    const block = el.tlClips.querySelector(`[data-id="${clip.id}"]`);
+    if (!block) return;
+    block.classList.toggle("muted", clip.gainDb <= -60);
+    const foot = block.querySelector(".tl-clip-foot");
+    if (!foot) return;
+    foot.innerHTML = "";
+    for (const badge of clipBadges(clip)) {
+      const span = document.createElement("span");
+      span.className = `tl-badge${badge.css ? ` ${badge.css}` : ""}`;
+      span.textContent = badge.text;
+      foot.appendChild(span);
+    }
+  }
+
+  function previewGain(deltaDb) {
+    const gesture = state.gainGesture;
+    if (!gesture) return;
+    for (const clip of gesture.pieces) {
+      const base = gesture.base.get(clip.id) || 0;
+      clip.gainDb = Math.max(-60, Math.min(24, Math.round(base + deltaDb)));
+      updateClipBadges(clip);
+      // Si esa parte está sonando ahora mismo, el cambio se oye al instante.
+      if (audioEngine.playingClip === clip.id) gainFor(nodeFor(clip.assetId), clip.gainDb);
+    }
+    el.tlGainValue.textContent = `${deltaDb > 0 ? "+" : ""}${deltaDb} dB`;
+    el.tlGainHint.textContent = gainResultLabel(gesture.pieces);
+    el.tlGain.setAttribute("aria-valuenow", String(deltaDb));
+  }
+
+  function finishGainGesture() {
+    const gesture = state.gainGesture;
+    state.gainGesture = null;
+    el.tlGainValue.textContent = "0 dB";
+    el.tlGainHint.textContent = "arrastra ↕";
+    el.tlGain.setAttribute("aria-valuenow", "0");
+    if (!gesture) return;
+    pushHistory(gesture.before);
+    refresh();
+  }
+
+  // La parte elegida se sombrea y la cajita se pega a la zona visible: da igual lo
+  // desplazado que esté el montaje, siempre queda a mano.
+  function renderSelection() {
+    const range = state.selection;
+    const length = total();
+    if (!range || !length || range.end - range.start < 0.001) {
+      el.tlSelect.classList.add("hidden");
+      el.tlGain.classList.add("hidden");
       return;
     }
-    clip.start = start;
-    clip.end = end;
-    clip.fadeIn = Math.min(clip.fadeIn, clipDuration(clip));
-    clip.fadeOut = Math.min(clip.fadeOut, Math.max(0, clipDuration(clip) - clip.fadeIn));
-    pushHistory(before);
-    refresh();
+
+    const scale = pixelsPerSecond();
+    const start = Math.max(0, Math.min(range.start, length));
+    const end = Math.max(start, Math.min(range.end, length));
+    const left = start * scale;
+    const width = Math.max(2, (end - start) * scale);
+
+    el.tlSelect.style.transform = `translateX(${left}px)`;
+    el.tlSelect.style.width = `${width}px`;
+    el.tlSelect.classList.remove("hidden");
+
+    const view = el.tlScroll.clientWidth || 0;
+    const half = 62; // medio ancho de la cajita
+    const center = left + width / 2;
+    const min = el.tlScroll.scrollLeft + half;
+    const max = el.tlScroll.scrollLeft + Math.max(view, half * 2) - half;
+    el.tlGain.style.transform = `translateX(${Math.max(min, Math.min(center, max)) - half}px)`;
+    el.tlGain.classList.remove("hidden");
   }
 
   /* ---------------- escucha ----------------
@@ -894,6 +1103,7 @@
     ctx: null,
     nodes: new Map(),
     started: null,
+    playingClip: null, // tramo que suena ahora, para oír los cambios de volumen en vivo
   };
 
   function audioContext() {
@@ -941,6 +1151,7 @@
     if (rafId) cancelAnimationFrame(rafId);
     rafId = null;
     audioEngine.started = null;
+    audioEngine.playingClip = null;
     updateTransport();
     updatePlayhead();
   }
@@ -1013,6 +1224,7 @@
       applyGainAutomation(entry, clip, offset);
       entry.element.play().catch(() => {});
       active = clip.id;
+      audioEngine.playingClip = clip.id;
     };
 
     const stopClip = () => {
@@ -1020,6 +1232,7 @@
         if (!entry.element.paused) entry.element.pause();
       }
       active = null;
+      audioEngine.playingClip = null;
     };
 
     startClip(current.clip, current.offset);
@@ -1245,103 +1458,13 @@
       }
     });
   }
-  el.btnSplit.addEventListener("click", splitAtCursor);
-  el.btnDuplicate.addEventListener("click", () => state.selectedId && duplicateClip(state.selectedId));
-  el.btnListenClip.addEventListener("click", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    stopPlayback();
-    const entry = nodeFor(clip.assetId);
-    entry.element.currentTime = clip.start;
-    gainFor(entry, clip.gainDb);
-    entry.element.play().catch(() => {});
-  });
-
-  el.btnFull.addEventListener("click", () => {
-    const clip = clipOf(state.selectedId);
-    const asset = clip && assetOf(clip.assetId);
-    if (!asset) return;
-    applyRange(0, asset.duration);
-  });
-
-  el.inStart.addEventListener("change", () => {
-    const clip = clipOf(state.selectedId);
-    if (clip) applyRange(el.inStart.value, clip.end);
-  });
-  el.inEnd.addEventListener("change", () => {
-    const clip = clipOf(state.selectedId);
-    if (clip) applyRange(clip.start, el.inEnd.value);
-  });
-
-  // Los deslizadores se aplican en vivo, pero a la pila de deshacer va un solo
-  // paso por gesto: se guarda el estado al empezar a arrastrar.
-  function trackGesture() {
-    state.gestureBefore = snapshot();
-  }
+  // Un gesto largo (arrastrar un borde para recortar, subir el volumen de una parte
+  // elegida) va a la pila de deshacer como un solo paso: se guarda al empezar.
   function commitGesture() {
     if (!state.gestureBefore) return;
     pushHistory(state.gestureBefore);
     state.gestureBefore = null;
   }
-
-  for (const slider of [el.inGain, el.inFadeIn, el.inFadeOut]) {
-    slider.addEventListener("pointerdown", trackGesture);
-    slider.addEventListener("keydown", trackGesture);
-  }
-
-  el.inGain.addEventListener("input", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    clip.gainDb = Number(el.inGain.value);
-    el.outGain.textContent = clip.gainDb <= -60 ? "silencio" : `${clip.gainDb} dB`;
-    refresh();
-  });
-  el.inGain.addEventListener("change", commitGesture);
-
-  el.inFadeIn.addEventListener("input", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    clip.fadeIn = Math.min(Number(el.inFadeIn.value), clipDuration(clip));
-    el.outFadeIn.textContent = `${clip.fadeIn} s`;
-    refresh();
-  });
-  el.inFadeIn.addEventListener("change", commitGesture);
-
-  el.inFadeOut.addEventListener("input", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    clip.fadeOut = Math.min(Number(el.inFadeOut.value), clipDuration(clip));
-    el.outFadeOut.textContent = `${clip.fadeOut} s`;
-    refresh();
-  });
-  el.inFadeOut.addEventListener("change", commitGesture);
-
-  el.btnMute.addEventListener("click", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    commit(() => {
-      clip.gainDb = clip.gainDb <= -60 ? 0 : -60;
-    });
-  });
-
-  el.btnGainAll.addEventListener("click", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    commit(() => {
-      for (const item of state.clips) item.gainDb = clip.gainDb;
-    });
-  });
-
-  el.btnFadeAll.addEventListener("click", () => {
-    const clip = clipOf(state.selectedId);
-    if (!clip) return;
-    commit(() => {
-      for (const item of state.clips) {
-        item.fadeIn = Math.min(clip.fadeIn, clipDuration(item));
-        item.fadeOut = Math.min(clip.fadeOut, clipDuration(item));
-      }
-    });
-  });
 
   el.btnClear.addEventListener("click", () => {
     if (!state.clips.length) return;
@@ -1359,9 +1482,7 @@
   el.outFormat.addEventListener("change", syncFormatFields);
 
   el.tlRuler.addEventListener("click", (event) => {
-    const rect = el.tlRuler.getBoundingClientRect();
-    const scale = pixelsPerSecond();
-    seek((event.clientX - rect.left) / scale);
+    seek(timeAtClientX(event.clientX));
   });
 
   el.tlRuler.addEventListener("keydown", (event) => {
@@ -1374,9 +1495,9 @@
   // El cursor también se puede arrastrar sobre la regla.
   el.tlRuler.addEventListener("pointerdown", (event) => {
     el.tlRuler.setPointerCapture(event.pointerId);
-    const rect = el.tlRuler.getBoundingClientRect();
-    const scale = pixelsPerSecond();
-    const move = (ev) => seek((ev.clientX - rect.left) / scale);
+    // El tiempo se recalcula en cada movimiento en vez de congelar el rectángulo:
+    // con el zoom puesto la vista se desplaza sola y el punto bajo el dedo cambia.
+    const move = (ev) => seek(timeAtClientX(ev.clientX));
     move(event);
     el.tlRuler.addEventListener("pointermove", move);
     const up = () => {
@@ -1385,6 +1506,241 @@
     };
     window.addEventListener("pointerup", up);
   });
+
+  // La línea del cursor se agarra y se arrastra con el ratón, a lo largo de toda su
+  // altura y también por encima de los tramos: no hay que apuntar a la regla.
+  el.tlGrab.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !state.clips.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const fromX = event.clientX;
+    const fromCursor = state.cursor;
+    state.draggingCursor = true;
+    capturePointer(el.tlGrab, event.pointerId);
+
+    const move = (ev) => seek(fromCursor + (ev.clientX - fromX) / pixelsPerSecond());
+    const end = () => {
+      state.draggingCursor = false;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  });
+
+  // El botón central del ratón desplaza la vista, como en cualquier editor. Sin esto,
+  // con el zoom puesto habría que tirar de la barra de desplazamiento.
+  el.tlScroll.addEventListener("pointerdown", (event) => {
+    if (event.button !== 1 || !state.clips.length) return;
+    event.preventDefault();
+
+    const fromX = event.clientX;
+    const fromScroll = el.tlScroll.scrollLeft;
+    capturePointer(el.tlScroll, event.pointerId);
+
+    const move = (ev) => {
+      el.tlScroll.scrollLeft = Math.max(0, fromScroll - (ev.clientX - fromX));
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  });
+
+  /* ------------- elegir una parte, con el ratón sobre la onda -------------
+     Arrastrar sobre la onda elige un trozo de música; un clic suelto sigue eligiendo
+     el tramo (y su cabecera sigue siendo lo que se arrastra para reordenar). */
+
+  el.tlClips.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !state.clips.length) return;
+    if (event.target.closest(".tl-clip-head") || event.target.closest(".tl-clip-handle")) return;
+
+    const anchor = timeAtClientX(event.clientX);
+    const originX = event.clientX;
+    let dragged = false;
+    capturePointer(el.tlClips, event.pointerId);
+
+    const move = (ev) => {
+      if (!dragged && Math.abs(ev.clientX - originX) < 3) return;
+      dragged = true;
+      const time = timeAtClientX(ev.clientX);
+      state.selection = {
+        start: Math.max(0, Math.min(anchor, time)),
+        end: Math.min(total(), Math.max(anchor, time)),
+      };
+      renderSelection();
+    };
+
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      // Un clic suelto no deja selección: elige el tramo, como siempre.
+      if (!dragged || (state.selection && state.selection.end - state.selection.start < MIN_SEL)) {
+        state.selection = null;
+      }
+      renderTimeline();
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  });
+
+  // Doble clic sobre un tramo: lo elige entero, que es la otra forma de decir «todo esto».
+  el.tlClips.addEventListener("dblclick", (event) => {
+    const block = event.target.closest(".tl-clip");
+    if (!block) return;
+    const range = clipRange(block.dataset.id);
+    if (!range) return;
+    state.selectedId = block.dataset.id;
+    state.selection = range;
+    renderTimeline();
+  });
+
+  /* ------------- la cajita del volumen de esa parte -------------
+     Se arrastra hacia arriba o hacia abajo: 4 px por dB, y con Mayús 20 px por dB para
+     afinar. La rueda sobre ella mueve de dB en dB y las flechas también. */
+
+  el.tlGain.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !state.selection) return;
+    event.preventDefault();
+    event.stopPropagation();
+    capturePointer(el.tlGain, event.pointerId);
+
+    const fromY = event.clientY;
+    let applied = 0;
+    let blocked = false;
+
+    const move = (ev) => {
+      if (blocked) return;
+      const step = ev.shiftKey ? 20 : 4;
+      const delta = Math.round((fromY - ev.clientY) / step);
+      if (delta === applied) return;
+      if (delta === 0) {
+        applied = 0;
+        return;
+      }
+      if (!state.gainGesture && !beginGainGesture()) {
+        blocked = true;
+        return;
+      }
+      applied = delta;
+      previewGain(delta);
+    };
+
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      finishGainGesture();
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  });
+
+  // La rueda sobre la cajita no debe llegar a la línea de tiempo: allí acerca y aleja.
+  el.tlGain.addEventListener("wheel", (event) => {
+    if (!state.selection) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!beginGainGesture()) return;
+    previewGain(event.deltaY > 0 ? -1 : 1);
+    finishGainGesture();
+  }, { passive: false });
+
+  el.tlGain.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (!state.selection) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 5 : 1;
+    if (!beginGainGesture()) return;
+    previewGain(event.key === "ArrowUp" ? step : -step);
+    finishGainGesture();
+  });
+
+  // Si la vista se desplaza, la cajita se recoloca para no quedarse fuera.
+  el.tlScroll.addEventListener("scroll", () => {
+    if (state.selection) renderSelection();
+  });
+
+  /* ---------------- zoom de la línea de tiempo ---------------- */
+
+  // El botón del recuadro vacío: trae el audio cargado o lleva a la tarjeta de audios.
+  el.btnEmptyAdd.addEventListener("click", () => {
+    const asset = state.assets[0];
+    if (asset) addClip(asset.id);
+    else el.sourcesCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  // La rueda, sin más, sobre la línea de tiempo: hacia arriba acerca y hacia abajo
+  // aleja, siempre anclada al punto que señala el ratón. Mayús + rueda (o una rueda
+  // horizontal, como la del trackpad) desplaza la vista. La rueda llega en ráfagas de
+  // decenas por segundo, así que se agrupa en un solo repintado por fotograma.
+
+  // Un ratón de verdad manda «líneas», no píxeles (deltaMode 1): sin traducirlas, el
+  // zoom apenas se movería.
+  function wheelPixels(event, axis) {
+    const value = axis === "x" ? event.deltaX : event.deltaY;
+    if (!value) return 0;
+    if (event.deltaMode === 1) return value * 33;
+    if (event.deltaMode === 2) return value * (el.tlScroll.clientHeight || 400);
+    return value;
+  }
+
+  let wheelZoomFrame = 0;
+  let wheelZoomSum = 0;
+  let wheelZoomAnchor = null;
+
+  el.tlScroll.addEventListener("wheel", (event) => {
+    if (!state.clips.length) return; // sin montaje no hay nada que ampliar ni que mover
+
+    const dx = wheelPixels(event, "x");
+    const dy = wheelPixels(event, "y");
+
+    // Rueda horizontal o Mayús: desplazar la vista, que es lo que se espera.
+    if (event.shiftKey || Math.abs(dx) > Math.abs(dy)) {
+      event.preventDefault();
+      el.tlScroll.scrollLeft = Math.max(0, el.tlScroll.scrollLeft + dx + dy);
+      return;
+    }
+
+    // Si la rueda no va a cambiar nada (ya está en el tope), que la página se desplace.
+    const next = Math.min(maxZoom(), Math.max(1, state.zoom * Math.pow(1.0015, -dy)));
+    if (Math.abs(next - state.zoom) < 0.0005 && !wheelZoomFrame) return;
+    event.preventDefault();
+
+    // El ancla se fija al empezar la ráfaga: es el punto que el usuario está mirando.
+    if (!wheelZoomAnchor) {
+      wheelZoomAnchor = {
+        time: timeAtClientX(event.clientX),
+        at: event.clientX - el.tlScroll.getBoundingClientRect().left,
+      };
+    }
+    wheelZoomSum += dy;
+    if (wheelZoomFrame) return;
+    wheelZoomFrame = window.requestAnimationFrame(() => {
+      wheelZoomFrame = 0;
+      const sum = wheelZoomSum;
+      const anchor = wheelZoomAnchor;
+      wheelZoomSum = 0;
+      wheelZoomAnchor = null;
+      // 1.0015 por píxel de rueda: un giro suave no salta de golpe.
+      setZoom(state.zoom * Math.pow(1.0015, -sum), anchor.time, anchor.at);
+    });
+  }, { passive: false });
 
   document.addEventListener("keydown", (event) => {
     const tag = (event.target.tagName || "").toLowerCase();
@@ -1417,13 +1773,26 @@
       nudge(event.shiftKey ? 10 : 1);
     } else if (event.key === "ArrowLeft") {
       nudge(event.shiftKey ? -10 : -1);
+    } else if (event.key === "+" || event.key === "=") {
+      // El cursor se queda donde estaba: es lo que se está mirando.
+      event.preventDefault();
+      zoomBy(ZOOM_STEP, state.cursor, null);
+    } else if (event.key === "-" || event.key === "_") {
+      event.preventDefault();
+      zoomBy(1 / ZOOM_STEP, state.cursor, null);
+    } else if (event.key === "0") {
+      event.preventDefault();
+      setZoom(1);
+    } else if (event.key === "Escape") {
+      if (!state.selection) return;
+      event.preventDefault();
+      state.selection = null;
+      renderTimeline();
     }
   });
 
   window.addEventListener("resize", () => {
     if (state.clips.length) renderTimeline();
-    const clip = clipOf(state.selectedId);
-    if (clip) drawInspectorWave(clip);
   });
 
   /* ---------------- arrastrar archivos a la ventana ---------------- */
@@ -1447,55 +1816,51 @@
     uploadFiles(event.dataTransfer.files);
   });
 
-  /* ---------------- tramo: tiradores de la onda ---------------- */
+  /* ------------- tramo: tiradores sobre la línea de tiempo -------------
+     El recorte se hace en el propio tramo: se arrastran sus bordes y la onda se
+     redibuja con la parte que se va a exportar. La onda grande que había en los
+     controles se retiró porque era esta misma onda dibujada dos veces. */
 
-  function wavePointer(event) {
-    const clip = clipOf(state.selectedId);
+  function beginTrim(event, clipId, edge) {
+    const clip = clipOf(clipId);
     const asset = clip && assetOf(clip.assetId);
     if (!clip || !asset) return;
-    const rect = el.wave.getBoundingClientRect();
-    const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
-    const time = (x / rect.width) * asset.duration;
 
-    const startPx = (clip.start / asset.duration) * rect.width;
-    const endPx = (clip.end / asset.duration) * rect.width;
-    const nearStart = Math.abs(x - startPx);
-    const nearEnd = Math.abs(x - endPx);
+    event.preventDefault();
+    event.stopPropagation();
 
-    if (event.type === "pointerdown") {
-      if (Math.min(nearStart, nearEnd) > 14) return;
-      state.gestureBefore = snapshot();
-      el.wave.dataset.handle = nearStart <= nearEnd ? "start" : "end";
-      el.wave.setPointerCapture(event.pointerId);
-    }
+    state.selectedId = clipId;
+    state.gestureBefore = snapshot();
 
-    const handle = el.wave.dataset.handle;
-    if (!handle) return;
+    const fromX = event.clientX;
+    const from = edge === "start" ? clip.start : clip.end;
+    const scale = pixelsPerSecond();
 
-    if (handle === "start") {
-      clip.start = Math.max(0, Math.min(time, clip.end - 0.05));
-    } else {
-      clip.end = Math.min(asset.duration, Math.max(time, clip.start + 0.05));
-    }
-    clip.fadeIn = Math.min(clip.fadeIn, clipDuration(clip));
-    clip.fadeOut = Math.min(clip.fadeOut, clipDuration(clip));
-    renderInspector();
+    const move = (moveEvent) => {
+      const delta = (moveEvent.clientX - fromX) / scale;
+      const value = from + delta;
+      if (edge === "start") clip.start = Math.max(0, Math.min(value, clip.end - 0.05));
+      else clip.end = Math.min(asset.duration, Math.max(value, clip.start + 0.05));
+      clip.fadeIn = Math.min(clip.fadeIn, clipDuration(clip));
+      clip.fadeOut = Math.min(clip.fadeOut, clipDuration(clip));
+      renderTimeline();
+      updateTransport();
+    };
+
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      commitGesture();
+      refresh();
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+
     renderTimeline();
-    updateTransport();
   }
-
-  el.wave.addEventListener("pointerdown", wavePointer);
-  el.wave.addEventListener("pointermove", (event) => {
-    if (el.wave.dataset.handle) wavePointer(event);
-  });
-  el.wave.addEventListener("pointerup", () => {
-    delete el.wave.dataset.handle;
-    commitGesture();
-  });
-  el.wave.addEventListener("pointercancel", () => {
-    delete el.wave.dataset.handle;
-    commitGesture();
-  });
 
   /* ---------------- arranque ---------------- */
 

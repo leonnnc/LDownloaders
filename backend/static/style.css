@@ -633,6 +633,17 @@ body {
 
 #progress-card .btn { margin-top: 16px; width: 100%; }
 
+/* El enlace de respaldo no es un botón ni un paso: el archivo ya se guarda
+   solo al elegir la calidad. Está por si el navegador bloquea la descarga
+   automática, que es lo único que dejaría al usuario sin el archivo. */
+.dl-fallback {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.dl-fallback:hover { color: var(--accent); text-decoration: underline; }
+
 /* ---------- Alertas ---------- */
 .alert {
   padding: 13px 16px;
