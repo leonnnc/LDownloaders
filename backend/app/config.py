@@ -290,7 +290,7 @@ EDITOR_SAMPLE_RATE = _env_int("VDL_EDITOR_SAMPLE_RATE", 44100)
 
 # Puntos de onda por segundo que se calculan para dibujar la línea de tiempo.
 # Los archivos largos usan menos (se recalcula para no devolver un JSON enorme).
-EDITOR_PEAKS_PER_SECOND = _env_int("VDL_EDITOR_PEAKS_PER_SECOND", 20)
+EDITOR_PEAKS_PER_SECOND = _env_int("VDL_EDITOR_PEAKS_PER_SECOND", 60)
 
 # Cupo de peticiones del editor: subir, exportar y consultar. Va aparte del cupo
 # general para que editar audio no consuma el derecho a analizar enlaces.

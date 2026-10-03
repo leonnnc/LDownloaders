@@ -271,8 +271,10 @@ Cómo se usa:
    con el ratón: la **rueda** sobre la línea acerca y aleja en el punto señalado,
    <kbd>Mayús</kbd>+rueda (o la rueda horizontal del trackpad) desplaza la vista, el
    **botón central** la desplaza arrastrando, y la **línea del cursor se arrastra**
-   directamente con el ratón. Con el teclado: <kbd>+</kbd> y <kbd>−</kbd> acercan y
-   alejan, y <kbd>0</kbd> vuelve a ver el montaje entero.
+   directamente con el ratón, y al arrastrar cerca de un borde la vista se corre sola
+   para poder seguir eligiendo más allá de lo que se ve. Con el teclado: <kbd>+</kbd> y
+   <kbd>−</kbd> acercan y alejan (hasta dejar un segundo en la pantalla, que es el tope)
+   y <kbd>0</kbd> vuelve a ver el montaje entero.
 3. **Escúchalo** — controles de reproducción completos: reproducir y pausar,
    ir al inicio y al final, repetir el montaje sin parar, velocidad de 0,75× a 2×
    y una barra de posición arrastrable. Al lado está **✂ Cortar**, que saca del

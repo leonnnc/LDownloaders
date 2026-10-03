@@ -299,11 +299,13 @@
 }
 
 /* Zona de agarre del cursor: la línea es fina, así que se arrastra con un margen
-   ancho a los lados. Va por encima de los tramos para no tener que apuntar. */
+   ancho a los lados. Ocupa solo la regla: antes bajaba por todo el alto y tapaba la
+   onda justo en la junta que deja un corte, que es donde uno va a elegir la parte
+   siguiente. */
 .tl-grab {
   position: absolute;
   top: 0;
-  bottom: 0;
+  height: 22px;
   left: -7px;
   width: 15px;
   z-index: 4;

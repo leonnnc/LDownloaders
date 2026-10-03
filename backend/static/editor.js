@@ -282,14 +282,18 @@
 
   /* ---------------- escala y zoom de la línea de tiempo ----------------
      «Ajustar» (zoom = 1) es ver el montaje entero de una vez: la escala sale de
-     repartir el ancho disponible entre la duración total. A partir de ahí el
-     usuario amplía, y dos topes evitan que la vista se vuelva inmanejable: ni se
-     pasa de ZOOM_MAX_PPS px/s de detalle ni de ZOOM_MAX_WIDTH px de contenido
-     (con más, cada onda sería un lienzo enorme que el navegador no dibuja bien). */
+     repartir el ancho disponible entre la duración total. A partir de ahí el usuario
+     amplía hasta ver un segundo en la vista (ZOOM_MIN_SPAN), que es el tope que de
+     verdad sirve para clavar un corte: más allá no se gana nada. Los otros dos topes
+     son de seguridad: ZOOM_MAX_PPS px/s de detalle y ZOOM_MAX_WIDTH px de contenido.
+     Con el zoom a tope el montaje puede medir cientos de miles de píxeles, así que la
+     onda se dibuja en un lienzo más corto y el CSS lo estira (ver CANVAS_MAX_PX) y la
+     regla dibuja solo las marcas que se ven. */
 
-  const ZOOM_STEP = 1.25;        // cuánto cambia el zoom en cada pulsación
-  const ZOOM_MAX_PPS = 240;      // px por segundo con el máximo detalle
-  const ZOOM_MAX_WIDTH = 10000;  // px de ancho máximo del contenido
+  const ZOOM_STEP = 1.25;         // cuánto cambia el zoom en cada pulsación
+  const ZOOM_MIN_SPAN = 1;        // segundos que se ven con el zoom a tope
+  const ZOOM_MAX_PPS = 1200;      // px por segundo, por si la vista es muy ancha
+  const ZOOM_MAX_WIDTH = 4000000; // px de ancho máximo del contenido
 
   function fitScale() {
     const width = el.tlScroll.clientWidth || 900;
@@ -301,7 +305,12 @@
   function maxScale() {
     const length = total();
     if (!length) return fitScale();
-    return Math.max(fitScale(), Math.min(ZOOM_MAX_PPS, ZOOM_MAX_WIDTH / length));
+    const view = el.tlScroll.clientWidth || 900;
+    // El tope útil es ver un segundo en la vista; los demás solo evitan dispares.
+    return Math.max(
+      fitScale(),
+      Math.min(ZOOM_MAX_PPS, view / ZOOM_MIN_SPAN, ZOOM_MAX_WIDTH / length)
+    );
   }
 
   function maxZoom() {
@@ -372,13 +381,21 @@
 
   /* ---------------- forma de onda ---------------- */
 
+  /* Ancho máximo del lienzo de una onda. Con el zoom a tope un tramo puede medir
+     cientos de miles de píxeles y los navegadores no dibujan lienzos así (su tope son
+     32.767 px por lado, y con pantallas de alta densidad el lienzo se pide al doble).
+     Se pinta más corto y el CSS lo estira: a ese zoom la onda ya es una escalera por
+     la resolución de los picos, así que estirarla no quita nada que se notara. */
+  const CANVAS_MAX_PX = 30000;
+
   function fitCanvas(canvas, width, height) {
     const dpr = window.devicePixelRatio || 1;
-    const w = Math.max(1, Math.round(width));
+    const cssW = Math.max(1, Math.round(width));
+    const w = Math.min(cssW, CANVAS_MAX_PX);
     const h = Math.max(1, Math.round(height));
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
-    canvas.style.width = `${w}px`;
+    canvas.style.width = `${cssW}px`;
     canvas.style.height = `${h}px`;
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -868,8 +885,14 @@
       canvas.className = "tl-clip-wave";
       block.append(head, canvas);
 
-      // Tiradores: el tramo se recorta arrastrando sus bordes, aquí mismo.
+      // Tiradores: el tramo se recorta arrastrando sus bordes, aquí mismo. Van solo en
+      // los bordes de la sección: en una junta interior —el trozo que continúa a otro
+      // del mismo audio— no, porque ahí no hay un extremo que recortar, y además el
+      // tirador se comía el arrastre con el que se iba a elegir la parte siguiente
+      // justo en el punto donde se acaba de cortar.
       for (const edge of ["start", "end"]) {
+        if (edge === "start" && following) continue;
+        if (edge === "end" && followed) continue;
         const handle = document.createElement("span");
         handle.className = `tl-clip-handle ${edge}`;
         handle.setAttribute("role", "separator");
@@ -954,11 +977,15 @@
     const ctx = canvas.getContext("2d");
     const duration = clipDuration(clip);
     if (!duration) return;
-    const scale = width / duration;
+    // Se miden con el mismo ancho de lienzo que la onda: si la onda se dibujó más
+    // corta y el CSS la estira, un fundido medido con el ancho de pantalla quedaría a
+    // otra escala que la música que tapa.
+    const wide = Math.min(width, CANVAS_MAX_PX);
+    const scale = wide / duration;
     ctx.fillStyle = cssVar("--surface");
     ctx.globalAlpha = 0.75;
     if (clip.fadeIn > 0) {
-      const w = Math.min(width, clip.fadeIn * scale);
+      const w = Math.min(wide, clip.fadeIn * scale);
       ctx.beginPath();
       ctx.moveTo(0, 0);
       ctx.lineTo(w, 0);
@@ -967,11 +994,11 @@
       ctx.fill();
     }
     if (clip.fadeOut > 0) {
-      const w = Math.min(width, clip.fadeOut * scale);
+      const w = Math.min(wide, clip.fadeOut * scale);
       ctx.beginPath();
-      ctx.moveTo(width, 0);
-      ctx.lineTo(width - w, 0);
-      ctx.lineTo(width, height);
+      ctx.moveTo(wide, 0);
+      ctx.lineTo(wide - w, 0);
+      ctx.lineTo(wide, height);
       ctx.closePath();
       ctx.fill();
     }
@@ -983,7 +1010,14 @@
     if (!length) return;
     const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
     const step = steps.find((value) => value * scale >= 64) || steps[steps.length - 1];
-    for (let t = 0; t <= length + 0.001; t += step) {
+    // Con el zoom a tope la línea de tiempo mide cientos de miles de píxeles: se crean
+    // solo las marcas que se ven, más un margen a cada lado, en vez de las miles que
+    // caben en el total. La regla sigue midiendo lo mismo —el ancho lo fija
+    // renderTimeline—; lo que cambia es cuántas marcas se crean.
+    const view = el.tlScroll.clientWidth || 900;
+    const from = Math.max(0, (el.tlScroll.scrollLeft - view) / scale);
+    const to = Math.min(length, (el.tlScroll.scrollLeft + view * 2) / scale);
+    for (let t = Math.ceil(from / step) * step; t <= to + 0.001; t += step) {
       const tick = document.createElement("span");
       tick.className = "tl-tick";
       tick.style.left = `${t * scale}px`;
@@ -1607,8 +1641,15 @@
         };
         renderSelection();
       };
+      // En la regla también se corre la vista al llegar al borde.
+      const scroller = autoScroller(extend);
+      const track = (ev) => {
+        extend(ev);
+        scroller.at(ev.clientX);
+      };
       const end = () => {
-        el.tlRuler.removeEventListener("pointermove", extend);
+        scroller.stop();
+        el.tlRuler.removeEventListener("pointermove", track);
         window.removeEventListener("pointerup", end);
         window.removeEventListener("pointercancel", end);
         // Un roce sin arrastre no deja selección: se queda como estaba.
@@ -1617,7 +1658,7 @@
         }
         renderTimeline();
       };
-      el.tlRuler.addEventListener("pointermove", extend);
+      el.tlRuler.addEventListener("pointermove", track);
       window.addEventListener("pointerup", end);
       window.addEventListener("pointercancel", end);
       return;
@@ -1635,8 +1676,10 @@
     window.addEventListener("pointerup", up);
   });
 
-  // La línea del cursor se agarra y se arrastra con el ratón, a lo largo de toda su
-  // altura y también por encima de los tramos: no hay que apuntar a la regla.
+  // La línea del cursor se agarra y se arrastra con el ratón por la regla, que es donde
+  // está su tirador. Antes la zona de agarre bajaba por todo el alto y tapaba la onda
+  // justo en la junta que deja un corte, así que ahí el arrastre movía el cursor en vez
+  // de elegir la parte: parecía que ya no se podía seleccionar.
   el.tlGrab.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || !state.clips.length) return;
     event.preventDefault();
@@ -1701,6 +1744,56 @@
     return Math.abs(time - guide) * pixelsPerSecond() <= SNAP_PX ? guide : time;
   }
 
+  /* ------------- correr la vista mientras se elige una parte -------------
+     Al arrastrar cerca de un borde, la vista se corre sola y la parte elegida sigue
+     creciendo bajo el puntero. Sin esto, con el zoom puesto no se podría elegir más de
+     lo que cabe en la pantalla: habría que soltar y empezar otra vez. */
+
+  const EDGE_PX = 56;      // a qué distancia del borde empieza a correr
+  const EDGE_SPEED = 20;   // px por fotograma con el puntero pegado al borde
+
+  // Cuánto corre la vista según lo cerca que esté el puntero del borde: cero en el
+  // centro y más cuanto más se pega, para que se sienta proporcional.
+  function edgeStep(clientX) {
+    const rect = el.tlScroll.getBoundingClientRect();
+    const at = clientX - rect.left;
+    if (at < EDGE_PX) {
+      return -Math.max(1, Math.round(((EDGE_PX - at) / EDGE_PX) * EDGE_SPEED));
+    }
+    if (at > rect.width - EDGE_PX) {
+      return Math.max(1, Math.round(((at - (rect.width - EDGE_PX)) / EDGE_PX) * EDGE_SPEED));
+    }
+    return 0;
+  }
+
+  // Bucle por fotograma mientras el puntero esté en el borde. `onFrame` vuelve a medir
+  // la parte elegida: el puntero no se ha movido, lo que se mueve es el contenido bajo
+  // él, así que hay que recalcular con la misma posición.
+  function autoScroller(onFrame) {
+    let x = 0;
+    let frame = null;
+    const tick = () => {
+      frame = null;
+      const step = edgeStep(x);
+      if (!step) return;
+      const before = el.tlScroll.scrollLeft;
+      el.tlScroll.scrollLeft = Math.max(0, before + step);
+      if (el.tlScroll.scrollLeft === before) return;
+      onFrame(x);
+      frame = requestAnimationFrame(tick);
+    };
+    return {
+      at(clientX) {
+        x = clientX;
+        if (frame == null) frame = requestAnimationFrame(tick);
+      },
+      stop() {
+        if (frame != null) cancelAnimationFrame(frame);
+        frame = null;
+      },
+    };
+  }
+
   el.tlClips.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || !state.clips.length) return;
     if (event.target.closest(".tl-clip-head") || event.target.closest(".tl-clip-handle")) return;
@@ -1721,8 +1814,16 @@
       renderSelection();
     };
 
+    // Al llegar al borde, la vista se corre y la selección sigue creciendo.
+    const scroller = autoScroller(move);
+    const track = (ev) => {
+      move(ev);
+      scroller.at(ev.clientX);
+    };
+
     const end = () => {
-      window.removeEventListener("pointermove", move);
+      scroller.stop();
+      window.removeEventListener("pointermove", track);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
       // Un clic suelto no deja selección: elige el tramo, como siempre.
@@ -1732,7 +1833,7 @@
       renderTimeline();
     };
 
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", track);
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
   });
@@ -1812,9 +1913,18 @@
     finishGainGesture();
   });
 
-  // Si la vista se desplaza, la cajita se recoloca para no quedarse fuera.
+  // Si la vista se desplaza, se recolocan la cajita y las marcas de la regla: con el
+  // zoom a tope solo se dibujan las marcas que se ven, así que hay que rehacerlas al
+  // correr la vista. Va por fotograma para no rehacer el DOM en cada evento.
+  let rulerFrame = null;
   el.tlScroll.addEventListener("scroll", () => {
     if (state.selection) renderSelection();
+    if (rulerFrame == null) {
+      rulerFrame = requestAnimationFrame(() => {
+        rulerFrame = null;
+        renderRuler(total(), pixelsPerSecond());
+      });
+    }
   });
 
   /* ---------------- zoom de la línea de tiempo ---------------- */

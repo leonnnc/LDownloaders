@@ -311,21 +311,24 @@ def peaks_for(path: Path, duration: Optional[float]) -> dict:
     suficiente para dibujar. El resultado se guarda en `peaks.json` junto a la
     fuente, porque esto recorre el archivo entero.
     """
+    # Para archivos largos se baja la resolución en vez de devolver un JSON enorme, pero
+    # se mantiene alta de sobra para el zoom: con 60.000 puntos el archivo son unos
+    # cientos de KB y un segundo de música sigue teniendo detalle al ampliar.
+    per_second = config.EDITOR_PEAKS_PER_SECOND
+    if duration and duration > 0:
+        per_second = max(2.0, min(per_second, 60000.0 / duration))
+    per_second = round(per_second, 3)
+
     cached = path.parent / "peaks.json"
     if cached.is_file():
         try:
             data = json.loads(cached.read_text(encoding="utf-8"))
-            if data.get("peaks"):
+            # La caché vale solo si trae la resolución de ahora: al cambiarla se
+            # recalcula, en vez de servir una onda más basta de la cuenta.
+            if data.get("peaks") and data.get("per_second") == per_second:
                 return data
         except (OSError, json.JSONDecodeError):
             pass  # caché ilegible: se recalcula
-
-    # Para archivos largos se baja la resolución en vez de devolver un JSON
-    # enorme: la onda se dibuja en unos cientos de píxeles de ancho.
-    per_second = config.EDITOR_PEAKS_PER_SECOND
-    if duration and duration > 0:
-        per_second = max(2.0, min(per_second, 6000.0 / duration))
-    per_second = round(per_second, 3)
 
     samples_per_bucket = max(1, int(round(_PEAK_SAMPLE_RATE / per_second)))
     args = [
