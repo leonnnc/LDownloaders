@@ -645,10 +645,15 @@
   function removeClip(clipId) {
     commit(() => {
       const index = state.clips.findIndex((clip) => clip.id === clipId);
-      state.clips = state.clips.filter((clip) => clip.id !== clipId);
-      // Quitar un tramo tampoco tiene por qué dejar dos bloques donde había uno.
-      if (index !== -1) joinAround(index);
-      if (state.selectedId === clipId) state.selectedId = null;
+      if (index === -1) return;
+      // Se va la sección entera: la ✕ que se ve es la de la sección, no la de un trozo
+      // de dentro que no se ve.
+      const [first, last] = sectionBounds(index);
+      const gone = new Set(state.clips.slice(first, last + 1).map((clip) => clip.id));
+      state.clips = state.clips.filter((clip) => !gone.has(clip.id));
+      // Y los lados que quedan se vuelven a unir si eran el mismo audio.
+      joinAround(first);
+      if (state.selectedId && gone.has(state.selectedId)) state.selectedId = null;
     });
     keepSelectionValid();
     refresh();
@@ -731,9 +736,6 @@
     if (!range || !state.clips.length) return;
     if (range.end - range.start < MIN_SEL) return;
 
-    // El cursor se queda donde empezaba el corte: es el punto que se está mirando.
-    const at = Math.max(0, Math.min(range.start, total()));
-
     // La selección se suelta antes de repintar: eso ya no está en el montaje, y
     // dejar el sombreado un instante daría a entender lo contrario.
     state.selection = null;
@@ -750,7 +752,11 @@
     });
 
     keepSelectionValid();
-    seek(at);
+    // El cursor se queda donde estaba: cortar no tiene por qué plantar la guía roja en
+    // la junta recién hecha, que parece una marca del corte y no lo es. Se llama a seek
+    // con su propia posición para que, si el montaje se quedó más corto, el cursor se
+    // recoja en vez de quedarse fuera de la línea.
+    seek(state.cursor);
   }
 
   /* Los dos lados del corte eran un solo tramo antes de cortar, así que se vuelven a
@@ -819,6 +825,17 @@
       && before.gainDb === after.gainDb
       && before.fadeOut === 0
       && after.fadeIn === 0;
+  }
+
+  // Los límites de la sección a la que pertenece un tramo: hacia atrás y hacia adelante,
+  // mientras la junta no signifique nada. Lo usan el mover y el quitar, para que las dos
+  // cosas se lleven lo que se ve como una sola pieza.
+  function sectionBounds(index) {
+    let first = index;
+    while (first > 0 && sameRun(state.clips[first - 1], state.clips[first])) first -= 1;
+    let last = index;
+    while (last < state.clips.length - 1 && sameRun(state.clips[last], state.clips[last + 1])) last += 1;
+    return [first, last];
   }
 
   function renderTimeline() {
@@ -1032,12 +1049,20 @@
     const from = state.clips.findIndex((clip) => clip.id === dragId);
     const to = state.clips.findIndex((clip) => clip.id === targetId);
     if (from < 0 || to < 0 || from === to) return;
+
+    // Se mueve la sección entera: si se moviera solo su primer trozo, la sección se
+    // partiría en dos sin que nadie lo haya pedido.
+    const [first, last] = sectionBounds(from);
+    // Soltarla sobre sí misma no mueve nada.
+    if (to >= first && to <= last) return;
+
     commit(() => {
-      const [moved] = state.clips.splice(from, 1);
+      const moved = state.clips.splice(first, last - first + 1);
       let index = state.clips.findIndex((clip) => clip.id === targetId);
+      if (index < 0) index = state.clips.length;
       if (after) index += 1;
-      state.clips.splice(index, 0, moved);
-      state.selectedId = moved.id;
+      state.clips.splice(index, 0, ...moved);
+      state.selectedId = moved[0].id;
     });
   }
 
