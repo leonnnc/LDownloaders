@@ -64,8 +64,8 @@ ufw enable
 ### 3.2 Traer el proyecto
 
 ```bash
-git clone https://github.com/leonnnc/Ldownloader.git
-cd Ldownloader
+git clone https://github.com/leonnnc/LDownloaders.git
+cd LDownloaders
 ```
 
 ### 3.3 Configurar
@@ -210,7 +210,7 @@ el APK instalado en los móviles.
 ## 8. Actualizar el servicio desplegado
 
 ```bash
-cd Ldownloader
+cd LDownloaders
 git pull
 DOMAIN=tu.dominio.com docker compose -f deploy/docker-compose.prod.yml up -d --build
 ```

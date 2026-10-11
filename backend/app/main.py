@@ -1074,7 +1074,7 @@ def download_apk() -> FileResponse:
         raise HTTPException(
             404,
             "Esta instalación no incluye el APK. Descárgalo del repositorio: "
-            "https://github.com/leonnnc/Ldownloader/tree/main/apk",
+            "https://github.com/leonnnc/LDownloaders/tree/main/apk",
         )
 
     chosen = _newest_apk(candidates)
